@@ -1,0 +1,978 @@
+﻿Short-term rainfall nowcasting over India using ERA5-Land.  
+Definitive 15-day execution roadmap artifact:
+________________
+
+
+ROADMAP ARTIFACT
+"Evaluation of Spatiotemporal ML Models for Short-Term Rainfall Nowcasting Over an Indian Monsoon Region Using ERA5-Land"
+Duration: 15 calendar days | Skill: B.Tech (ML + Python) | Constraint: Submission-ready draft
+________________
+
+
+SECTION A — EXECUTION PHASE MAP
+Phase 1: Data & Scope Lock (Days 1–3)
+Days covered: 1, 2, 3
+Success condition: ERA5-Land hourly dataset downloaded, region fixed, variables selected, preprocessed into sequences
+Blocking: All modeling work depends on this
+What cannot start: Model training until sequences are validated in Phase 2
+________________
+
+
+Phase 2: Baseline Models & Metrics (Days 4–7)
+Days covered: 4, 5, 6, 7
+Success condition: Persistence baseline + Random Forest trained, evaluated, and metrics table locked
+Blocking: Cannot claim improvement without baseline results
+What cannot start: Deep learning or advanced ablations until baselines establish performance floor
+________________
+
+
+Phase 3: Spatiotemporal Model Development (Days 8–10)
+Days covered: 8, 9, 10
+Success condition: One spatiotemporal model (ConvLSTM or 3D CNN) trained, evaluated, and compared to baselines
+Blocking: Paper writing depends on final results
+What cannot start: Case study selection until model evaluation complete
+________________
+
+
+Phase 4: Pipeline Reproducibility & Analysis (Days 11–12)
+Days covered: 11, 12
+Success condition: Entire pipeline automated (Makefile/scripts), reproducible on reduced data, metrics finalized
+Blocking: Cannot write paper without locked metrics and finalized figures
+What cannot start: Paper drafting until all figures/tables are in outputs/ directory
+________________
+
+
+Phase 5: Paper Draft & Final Output (Days 13–15)
+Days covered: 13, 14, 15
+Success condition: Submission-ready draft (PDF), all sections complete, all artifacts packaged
+Blocking: Nothing after this
+What cannot start: Submission or defense until all sections written and checked
+________________
+
+
+SECTION B — DAILY TASK GRAPH
+DAY 1 – Scope, Region, Variables Locked
+Day Objective: Freeze all scientific parameters in config files and write a binding 1-page project scope.
+Atomic Tasks (30–120 min blocks):
+Task
+	Duration
+	Deliverable
+	Verification
+	Define region bounding box (monsoon-dominated Indian region, e.g., Kerala 8–12°N, 74–78°E) and write to config/project_scope.yaml.
+	45 min
+	config/project_scope.yaml with region_name, lat_min, lat_max, lon_min, lon_max
+	Bounding box can be plotted on a map; coordinates checked for typos
+	Lock time period (train: 2015–2021, val: 2022, test: 2023–2024) in config.
+	30 min
+	Same file: train_period, val_period, test_period
+	Each period covers at least 1 monsoon season (June–September for most regions)
+	List variables: tp (total precipitation, target), 2t (2m temperature), msl (mean sea level pressure). Finalize in config/variables.yaml.
+	30 min
+	config/variables.yaml with exact CDS parameter names
+	CDS API documentation cross-checked
+	Write evaluation metrics in docs/00_project_scope.md: RMSE, MAE, Pearson correlation, Brier Score (rain/no-rain threshold 0.1 mm).
+	30 min
+	docs/00_project_scope.md (1 page) with locked scope, leads (1h, 3h, 6h), metrics
+	Each metric has a clear threshold/interpretation
+	Choose lead times: predict rainfall at t+1h, t+3h, t+6h.
+	15 min
+	Same doc
+	Rationale written (short-term = nowcasting)
+	Hard Deliverables:
+* config/project_scope.yaml
+* config/variables.yaml
+* docs/00_project_scope.md
+Decision Gate:
+* By EOD: All three files exist and are self-consistent (region is one contiguous box, time period is continuous, variables are in CDS catalog).
+Failure Signature:
+* Any indecision on region (e.g., "maybe also do pan-India").
+* Variables not in CDS (e.g., made-up variable names).
+* Period spans non-existent dates.
+Immediate Downgrade Action (if stuck):
+* Use a pre-defined region (e.g., Western Ghats 10–15°N, 73–77°E) if custom region causes delays.
+* Use only tp + 2t if variable selection becomes time-consuming.
+________________
+
+
+DAY 2 – ERA5-Land CDS Access & Sample Download
+Day Objective: Prove you can programmatically download ERA5-Land data and read it into xarray.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Set up CDS API: create account, generate .cdsapirc key, test connection.
+	45 min
+	.cdsapirc file in home directory; successful test API call
+	cdsapi.Client() instantiates without error; request returns a response
+	Write scripts/download_era5land_sample.py to download 24 hours of ERA5-Land for your region.
+	60 min
+	data/raw/sample_era5land_20200615.nc (one day)
+	File size > 1 MB; readable with xr.open_dataset()
+	Create notebooks/01_check_sample.ipynb: load NetCDF, print shapes, plot one map of tp.
+	45 min
+	Notebook saved with output; 1 map showing precipitation pattern over region
+	Map is non-blank; latitude/longitude are correct
+	Validate units and dimensions: tp should be in m/h or kg/m²/s; time should be hourly.
+	30 min
+	Console output or notebook cell showing ds['tp'].attrs, ds.dims
+	Units documented; time index is hourly
+	Hard Deliverables:
+* .cdsapirc
+* data/raw/sample_era5land_20200615.nc
+* scripts/download_era5land_sample.py
+* notebooks/01_check_sample.ipynb
+Decision Gate:
+* By EOD: One full day of ERA5-Land NetCDF successfully read and visualized.
+Failure Signature:
+* API authentication fails (wrong key format, missing file).
+* CDS server timeout or quota exceeded.
+* Downloaded file is corrupted or has wrong dimensions.
+Immediate Downgrade Action:
+* If CDS API times out: manually download a small file (~1–2 weeks) via web UI, then proceed.
+* If netCDF library fails: switch to xarray.backends.scipy_ or convert GRIB to NetCDF offline.
+________________
+
+
+DAY 3 – Full Data Download & Quality Check
+Day Objective: Download all years (2015–2024) and verify completeness.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Write scripts/download_era5land_full.py to loop over years 2015–2024, download each year, save as data/raw/year=YYYY/era5land_YYYY.nc.
+	90 min
+	Script with error handling, logging, and resume logic
+	Script runs without crashing on test year 2018
+	Execute download for 2015–2024. Monitor logs in logs/download_era5land.log.
+	240 min (monitored)
+	All files in data/raw/year=YYYY/ for YYYY in [2015..2024]
+	10 files present; no truncated files (size > 100 MB each)
+	Write scripts/quick_stats.py to compute % missing, min/max tp per year. Export to outputs/quick_stats.csv.
+	60 min
+	outputs/quick_stats.csv with columns: year, missing_%, tp_min_mm, tp_max_mm
+	CSV is readable; missing % < 5% for all years
+	Create notebooks/02_annual_sanity.ipynb: plot time series of mean tp for one grid point across years; plot histogram of hourly rainfall values.
+	45 min
+	Notebook with 2+ figures saved
+	Time series is smooth; histogram shows expected log-normal distribution of rainfall
+	Hard Deliverables:
+* scripts/download_era5land_full.py
+* data/raw/year=YYYY/era5land_YYYY.nc for all YYYY ∈
+* scripts/quick_stats.py
+* outputs/quick_stats.csv
+* notebooks/02_annual_sanity.ipynb
+Decision Gate:
+* By EOD: All 10 years downloaded; quick stats show < 5% missing data.
+Failure Signature:
+* Downloads stall mid-year (quota or timeout).
+* Any year shows > 10% missing values.
+* Time series or histogram looks obviously wrong (e.g., all zeros).
+Immediate Downgrade Action:
+* If full 10-year download fails: download 5 years (2018–2022) instead; note in paper.
+* If missing data > 5%: use linear interpolation across small gaps.
+________________
+
+
+DAY 4 – Preprocessing: Sequence Builder
+Day Objective: Convert raw yearly NetCDFs into model-ready training/validation/test sequences.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Design sequence format: rolling windows of input length T_in (e.g., 6 hours), predicting rainfall at T_out (1h, 3h, 6h ahead). Write logic in docs/01_preprocessing.md.
+	60 min
+	docs/01_preprocessing.md with diagram/pseudocode
+	Explain how to avoid data leakage; clarify rain accumulation handling
+	Write scripts/build_sequences.py to: load all yearly NetCDFs, concatenate, create rolling windows, split train/val/test, normalize.
+	120 min
+	Script with logging
+	Script runs on one year without crashing
+	Run on full dataset. Output three .npz files: data/processed/train_2015_2021.npz, val_2022.npz, test_2023_2024.npz.
+	120 min
+	Train/val/test .npz files in data/processed/
+	File sizes match expected dimensions; shapes logged
+	Verify no temporal leakage: ensure train/val/test periods do not overlap in time.
+	30 min
+	Console output or notebook showing time indices
+	Print first/last timestamp of train/val/test; confirm no overlap
+	Document shapes in docs/01_preprocessing.md: e.g., train shape = (N_samples, 6 hours, 5 gridpoints, 2 variables).
+	30 min
+	Same doc updated
+	Shapes match script output; reasoning clear
+	Hard Deliverables:
+* scripts/build_sequences.py
+* data/processed/train_2015_2021.npz
+* data/processed/val_2022.npz
+* data/processed/test_2023_2024.npz
+* docs/01_preprocessing.md (updated)
+Decision Gate:
+* By EOD: One small sample sequence verified by hand (e.g., print a 6-hour sequence + target) and shapes logged.
+Failure Signature:
+* Script crashes due to memory or typo.
+* Shapes are inconsistent (e.g., mismatch between input and output dimensions).
+* Time leakage detected (test data appears in training).
+Immediate Downgrade Action:
+* If memory runs out: process by year, then concatenate (slower but safer).
+* If time leakage found: rewrite split logic; use pd.DatetimeIndex to enforce non-overlapping windows.
+________________
+
+
+DAY 5 – Persistence Baseline
+Day Objective: Implement and evaluate the simplest baseline: use current rainfall to predict future rainfall.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Write models/baseline_persistence.py: for each lead time (1h, 3h, 6h), predict rainfall(t) ≈ rainfall(t-k_hours).
+	60 min
+	Script with function predict_persistence(x_sequence, lead_time_hours)
+	Function accepts sequence array, returns predictions
+	Write scripts/evaluate_baselines.py to: load test_*.npz, run persistence, compute RMSE, MAE, correlation. Save to outputs/baseline_persistence_metrics.csv.
+	90 min
+	Script + outputs/baseline_persistence_metrics.csv
+	CSV has rows for each lead time (1h, 3h, 6h); columns for RMSE, MAE, r
+	Plot predicted vs actual rainfall scatter for one test event in notebooks/03_baseline_inspection.ipynb.
+	60 min
+	Notebook with scatter plots + time series
+	Plots show persistence is a weak predictor (r < 0.5 expected)
+	Interpret: persistence should have non-zero skill but be beatable by ML. Document expectations in docs/02_baseline_definition.md.
+	30 min
+	Doc file
+	Explain why persistence works (autocorrelation) and why it fails (weather changes)
+	Hard Deliverables:
+* models/baseline_persistence.py
+* scripts/evaluate_baselines.py
+* outputs/baseline_persistence_metrics.csv
+* notebooks/03_baseline_inspection.ipynb
+* docs/02_baseline_definition.md
+Decision Gate:
+* By EOD: Persistence metrics exist and are reasonable (RMSE > 0, r between -1 and 1).
+Failure Signature:
+* RMSE is NaN or zero (indicates all predictions are identical).
+* Correlation is > 0.9 (indicates trivial problem or wrong computation).
+* Script crashes on test data.
+Immediate Downgrade Action:
+* If metrics are NaN: check for division by zero or missing value handling.
+* If correlation too high: verify target is not accidentally being used as input.
+________________
+
+
+DAY 6 – Random Forest Baseline
+Day Objective: Implement a simple non-spatial ML baseline to set a second performance floor.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Write models/baseline_random_forest.py: for each grid cell independently, train a Random Forest (max_depth=10, n_estimators=100) using past 6h as features.
+	90 min
+	Script with class RandomForestRainfall
+	Constructor accepts hyperparams; fit/predict methods work
+	Write training logic in scripts/train_baseline_rf.py. Load train/val .npz, train RF per grid cell, save models to models/checkpoints/rf_models/.
+	90 min
+	Script + saved RF models
+	Script completes in < 30 min on full train set; pickled models exist
+	Evaluate on test set using scripts/evaluate_baselines.py (extended). Compute RMSE, MAE, correlation per lead time. Add results to outputs/baseline_rf_metrics.csv.
+	60 min
+	CSV file
+	Structure matches persistence CSV for easy comparison
+	Create comparison table in notebooks/04_baseline_comparison.ipynb: side-by-side metrics (persistence vs RF).
+	45 min
+	Notebook with table + bar plots
+	Show that RF beats persistence (expected) but not by huge margin
+	Hard Deliverables:
+* models/baseline_random_forest.py
+* scripts/train_baseline_rf.py
+* models/checkpoints/rf_models/ (directory with pickled RF models)
+* outputs/baseline_rf_metrics.csv
+* notebooks/04_baseline_comparison.ipynb
+Decision Gate:
+* By EOD: RF metrics computed and RF beats persistence (RMSE is lower).
+Failure Signature:
+* RF training crashes due to memory (too many grid cells or features).
+* RF predictions are NaN.
+* RF does not beat persistence (indicates poor hyperparams or wrong setup).
+Immediate Downgrade Action:
+* If memory overflows: reduce n_estimators to 50 or use sklearn's warm_start.
+* If RF underperforms: increase max_depth or add temporal features (day-of-year, hour).
+________________
+
+
+DAY 7 – Decision Gate: Baseline Integrity Check
+Day Objective: Verify baselines are solid before moving to deep learning.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Compare baseline metrics side-by-side: create outputs/baseline_summary_table.csv with columns [Model, Lead Time, RMSE, MAE, Correlation].
+	45 min
+	CSV table
+	Rows: persistence-1h, persistence-3h, persistence-6h, RF-1h, RF-3h, RF-6h
+	Verify RF > persistence for all lead times. If not, debug or accept and document.
+	30 min
+	Note in docs/02_baseline_definition.md
+	If acceptable: explain why (e.g., hyperparams); if not: flag for retuning before deep learning
+	Check test metrics are reasonable: RMSE between 0.1–2.0 mm/h (depends on region).
+	30 min
+	Console check
+	Consult expected rainfall distribution from Day 3 quick_stats
+	Decision: If baselines are solid → approve Day 8 start. If not → spend remaining time debugging RF hyperparams instead of jumping to deep learning.
+	60 min
+	Written decision in docs/03_model_design.md
+	Clear statement: "Baselines approved. Proceeding to spatiotemporal models on Day 8."
+	Hard Deliverables:
+* outputs/baseline_summary_table.csv
+* docs/03_model_design.md (started; decision gate statement)
+Decision Gate:
+* By EOD Day 7: Baselines are approved; metrics are reasonable; RF beats persistence.
+Failure Signature:
+* RF does not beat persistence across all lead times.
+* RMSE values are unreasonably high (> 5 mm/h) or low (< 0.01 mm/h).
+* Metrics are negative or NaN.
+Immediate Downgrade Action (CRITICAL):
+* If RF fails: DO NOT PROCEED TO DEEP LEARNING. Spend Day 8 retuning RF (increase max_depth, add features, or reduce grid to one cell for debugging).
+* If metrics are wrong: recheck data pipeline (Day 4). May require re-running sequence builder.
+________________
+
+
+DAY 8 – Spatiotemporal Model Skeleton
+Day Objective: Implement and run a first training pass of a ConvLSTM model end-to-end, even if undertrained.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Finalize architecture choice in docs/03_model_design.md: ConvLSTM (one LSTM layer, ~64 channels, 3×3 kernel) or simple 3D CNN.
+	45 min
+	Doc with equation/pseudocode and rationale
+	Architecture fits in memory; input/output shapes documented
+	Write models/conv_lstm.py with PyTorch / TensorFlow implementation. Include forward pass, loss function (MSE).
+	120 min
+	Script with class ConvLSTM or Conv3D_Rainfall
+	Constructor instantiates; forward pass runs on dummy batch
+	Write scripts/train_conv_lstm.py to: load train.npz, initialize model, train for 5 epochs (fast run for smoke test), log loss.
+	90 min
+	Script + first loss curves saved to outputs/training_logs/day8_epoch_losses.png
+	Script completes in < 20 min; loss decreases (not increases)
+	Test on a small subset (e.g., 1% of training data) to ensure no GPU/OOM issues and loss converges.
+	60 min
+	Notebook notebooks/05_model_test.ipynb with loss curves
+	Loss goes down; no NaN or Inf
+	Save best model checkpoint (after these 5 epochs) to models/checkpoints/conv_lstm_day8.pt.
+	15 min
+	Checkpoint file
+	File exists and > 1 MB
+	Hard Deliverables:
+* docs/03_model_design.md (finalized architecture)
+* models/conv_lstm.py
+* scripts/train_conv_lstm.py
+* models/checkpoints/conv_lstm_day8.pt
+* notebooks/05_model_test.ipynb
+Decision Gate:
+* By EOD: Model trains without crashing for 5 epochs; loss decreases.
+Failure Signature:
+* GPU memory exhausted (OOM).
+* Tensor shape mismatch during forward pass.
+* Loss is NaN or does not decrease (indicates exploding gradients or wrong target).
+Immediate Downgrade Action:
+* If OOM: reduce batch size (e.g., 16→8), reduce grid resolution (e.g., select subset of cells), or reduce sequence length.
+* If loss is NaN: add gradient clipping (torch.nn.utils.clip_grad_norm_); reduce learning rate.
+________________
+
+
+DAY 9 – Full Training Run with Early Stopping
+Day Objective: Train ConvLSTM to convergence on full training set; evaluate on validation set.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Extend scripts/train_conv_lstm.py to include: learning rate schedule, early stopping on validation RMSE, checkpoint on best model.
+	90 min
+	Updated script
+	Script has EarlyStopping callback or manual check; logs val RMSE per epoch
+	Run training for up to 50 epochs (stop early if val RMSE plateaus). Monitor logs in logs/train_conv_lstm.log.
+	180 min (monitored)
+	Training log + models/checkpoints/conv_lstm_best.pt
+	Training completes; checkpoint saved on best validation RMSE
+	Plot training and validation loss curves. Save to outputs/training_plots/learning_curves_conv_lstm.png.
+	45 min
+	Plot file
+	Curves show convergence; no obvious overfitting spikes
+	Test evaluation: apply best model to test set. Compute RMSE, MAE, Pearson r for each lead time. Save to outputs/conv_lstm_metrics.csv.
+	60 min
+	CSV file with results
+	Columns: Lead_Time_h, RMSE, MAE, Correlation
+	Hard Deliverables:
+* scripts/train_conv_lstm.py (extended)
+* models/checkpoints/conv_lstm_best.pt
+* logs/train_conv_lstm.log
+* outputs/training_plots/learning_curves_conv_lstm.png
+* outputs/conv_lstm_metrics.csv
+Decision Gate:
+* By EOD: ConvLSTM metrics computed and compared to baselines (persistence, RF).
+Failure Signature:
+* Training does not converge (loss remains constant or oscillates).
+* Validation RMSE is worse than baselines (indicates model is not learning).
+* Early stopping is never triggered (indicates no patience in stopping criterion).
+Immediate Downgrade Action:
+* If training stalls: reduce learning rate by 10×, or add data augmentation (random jitter on input).
+* If ConvLSTM underperforms baselines: simplify architecture (fewer layers, smaller grid), or increase training duration (set early stopping patience higher).
+________________
+
+
+DAY 10 – Model Comparison & Case Studies
+Day Objective: Generate final evaluation tables and case study visualizations for paper.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Create final metrics comparison table: persistence, RF, ConvLSTM for 1h/3h/6h leads. Save as outputs/table_final_metrics.csv.
+	60 min
+	CSV table
+	3 models × 3 lead times = 9 rows; RMSE, MAE, Correlation columns
+	Create notebooks/06_case_studies.ipynb: select 2–3 extreme rainfall events from test set, plot predicted vs actual maps for each event and lead time.
+	120 min
+	Notebook with figures
+	Maps show spatial patterns; clearly labeled (pred/actual/error)
+	Compute additional metrics: Brier Score for rain/no-rain threshold (0.1 mm/h). Add to metrics table.
+	45 min
+	Updated CSV
+	New column: Brier_Score for each model/lead combo
+	Finalize evaluation protocol in docs/04_evaluation.md: metrics definitions, threshold definitions, case study selection criteria.
+	45 min
+	Doc file
+	Explain why certain events were selected for case studies
+	Hard Deliverables:
+* outputs/table_final_metrics.csv
+* notebooks/06_case_studies.ipynb
+* docs/04_evaluation.md
+Decision Gate:
+* By EOD: Final metrics table locked; case study figures exist and are publication-quality.
+Failure Signature:
+* Metrics table has NaN or missing rows.
+* Case study maps are blank or obviously wrong.
+* Brier Score not computed (skip if too complex; not critical).
+Immediate Downgrade Action:
+* If case study selection is time-consuming: pick the single largest rainfall event in test set.
+* If Brier Score fails: remove it from final table (focus on RMSE/MAE).
+________________
+
+
+DAY 11 – Pipeline Reproducibility & Hardening
+Day Objective: Create a single Makefile or bash script that reproduces all results from raw data to figures.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Create Makefile with targets: download, preprocess, train_baselines, train_model, evaluate, figures.
+	120 min
+	Makefile in repo root
+	make download (or partial equiv.) runs script; make evaluate produces metrics
+	Alternatively, create scripts/run_pipeline.sh with sequential steps and error handling.
+	120 min
+	Bash script
+	Script is executable; comments explain each step
+	Document environment: create requirements.txt (pip) or environment.yml (conda).
+	60 min
+	File with all package versions
+	Include: numpy, xarray, pytorch/tf, scikit-learn, matplotlib
+	Create docs/05_reproducibility_guide.md: how to run pipeline, expected runtime, hardware requirements.
+	45 min
+	Doc file
+	Step-by-step instructions; note: downloading all data takes ~2 hours
+	Dry-run on reduced dataset (e.g., 1 year of data, 1 grid cell): verify all scripts execute without error.
+	120 min
+	Completed dry-run logged in logs/dry_run.log
+	Log shows all steps completed; final metrics table present
+	Hard Deliverables:
+* Makefile or scripts/run_pipeline.sh
+* requirements.txt or environment.yml
+* docs/05_reproducibility_guide.md
+* logs/dry_run.log
+Decision Gate:
+* By EOD: Pipeline runs on reduced data without user intervention; all intermediate outputs produced.
+Failure Signature:
+* Makefile has undefined variables or circular dependencies.
+* Dry-run fails at any step.
+* Scripts reference hard-coded paths or missing files.
+Immediate Downgrade Action:
+* If Makefile is complex: simplify to just a numbered bash script (01_download.sh, 02_preprocess.sh, etc.).
+* If dry-run fails: isolate the failing step and fix it before proceeding.
+________________
+
+
+DAY 12 – Paper Skeleton: Methods & Data Sections
+Day Objective: Write Methods and Data sections fully; create placeholder for Results/Figures.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Create paper/main.tex or paper/main.md with full structure: Introduction, Data, Methods, Experiments, Results, Discussion, Conclusion, References.
+	60 min
+	Document with all sections (even if stub)
+	Outline is self-contained; section order is logical
+	Fully draft Data section (1.5–2 pages): region, ERA5-Land variables, time period, preprocessing (sequences, normalization). Include table of summary statistics.
+	120 min
+	Section in paper
+	Cite CDS source; explain sequence construction; reference table_final_metrics.csv for later insertion
+	Fully draft Methods section (2–3 pages): persistence, Random Forest, ConvLSTM architectures, training procedure, evaluation metrics. Include architecture diagram or equation.
+	120 min
+	Section in paper
+	Architecture is clearly specified; hyperparameters listed; training details (optimizer, lr, epochs) documented
+	Create figure placeholders: e.g., \includegraphics[width=0.8\textwidth]{figures/region_map.png} with caption.
+	45 min
+	Stub figures in text
+	Figure captions are descriptive and self-contained
+	Write introduction (1 page) motivating nowcasting, short-term forecasting importance in India, role of ML.
+	60 min
+	Introduction section
+	Problem statement is clear; why nowcasting matters stated
+	Hard Deliverables:
+* paper/main.tex or paper/main.md
+* Fully written: Introduction, Data, Methods (stub figures/tables OK)
+Decision Gate:
+* By EOD: Data and Methods sections are almost final; no "TBD" placeholders in these sections.
+Failure Signature:
+* Text is vague ("we trained a model" without specifying architecture).
+* Hyperparameters are not listed.
+* Data section does not specify the exact region or time period.
+Immediate Downgrade Action:
+* If writing is slow: simplify Methods (e.g., describe RF in 1 paragraph instead of 2).
+* If introduction is incomplete: focus on Data + Methods; introduce later with Results.
+________________
+
+
+DAY 13 – Results & Discussion Sections
+Day Objective: Write Results and Discussion based on final metrics and case studies.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Insert final metrics table (table_final_metrics.csv) into Results. Write 1–1.5 pages describing: persistence performance, RF improvements, ConvLSTM gains.
+	120 min
+	Results section with table + text
+	Table is formatted; text references specific numbers
+	Add case study subsection: describe 2–3 events, show prediction quality for different lead times. Reference case study figures.
+	90 min
+	Subsection with figures
+	Figures are cited in text; explain why model succeeds/fails
+	Write Discussion (1.5–2 pages) covering: strengths (spatiotemporal learning), limitations (ERA5-Land resolution, no radar, urban heat islands), implications for Indian monsoon.
+	90 min
+	Discussion section
+	Discussion addresses model's generalizability; mentions failure cases
+	Add Future Work bullets (3–4 items): multi-region models, radar fusion, real-time pipeline.
+	30 min
+	Section in paper
+	Each bullet is 1–2 lines; realistic scope for M.Tech follow-up
+	Add Conclusion (0.5 page): summarize findings, restate impact.
+	30 min
+	Conclusion section
+	Conclusion does not overstate results; honest about limitations
+	Hard Deliverables:
+* Updated paper/main.tex with complete Results + Discussion + Conclusion
+* All case study figures referenced and cited
+Decision Gate:
+* By EOD: Results, Discussion, Conclusion are complete and self-contained.
+Failure Signature:
+* Results section is vague ("model performed well") without citing numbers.
+* Discussion ignores failure cases.
+* Future Work is too ambitious (e.g., "build global model").
+Immediate Downgrade Action:
+* If writing is slow: reduce case studies from 3 to 1 (most extreme event).
+* If discussion is hard: focus on describing what worked; skip deeper analysis.
+________________
+
+
+DAY 14 – Full Draft Integration & Consistency Check
+Day Objective: Produce a single, internally consistent PDF draft.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Compile paper to PDF: latexmk main.tex (or markdown → PDF converter).
+	45 min
+	outputs/draft_v1.pdf
+	PDF is readable; no compile errors
+	Consistency pass: cross-check all numbers (region coordinates, years, model hyperparams) between text and config files. Create checklist in docs/06_consistency_check.md.
+	120 min
+	Checklist file
+	Every number appears exactly once in consistent form; no contradictions
+	Verify all figures/tables are present in PDF and captions are complete.
+	45 min
+	PDF review (manual)
+	No missing figures; captions are full sentences
+	Abstract: write 150–200 word summary (problem, method, results, impact).
+	60 min
+	Abstract in paper
+	Clear, concise, states main result (ConvLSTM beats baselines by X%)
+	Final grammar/clarity pass: correct obvious typos; ensure tense consistency.
+	60 min
+	Edited paper
+	No obvious errors; reads smoothly
+	Hard Deliverables:
+* outputs/draft_v1.pdf
+* docs/06_consistency_check.md
+* Abstract in paper
+Decision Gate:
+* By EOD: PDF compiles, all figures present, internal consistency verified.
+Failure Signature:
+* Compile errors (missing bibliography, broken references).
+* Number contradictions (e.g., RMSE = 0.45 in text but 0.54 in table).
+* Missing figures/captions.
+Immediate Downgrade Action:
+* If compile fails: revert to markdown instead of LaTeX; export to PDF via pandoc.
+* If inconsistencies found: manually trace number sources and correct.
+________________
+
+
+DAY 15 – Final & Submission Ready
+Day Objective: Lock everything; create final archive; verify submission readiness.
+Atomic Tasks:
+Task
+	Duration
+	Deliverable
+	Verification
+	Numeric integrity spot-check: randomly sample 5 numbers from table_final_metrics.csv and verify they appear in the PDF paper.
+	45 min
+	Spot-check log in docs/07_final_qa.md
+	All 5 numbers match (RMSE 0.45 mm/h for ConvLSTM@6h, etc.)
+	Create README.md at repo root: project summary, data source, how to run pipeline, main results in one table.
+	60 min
+	README.md
+	Clear instructions; one-line each for data download, training, evaluation
+	Create docs/MANIFEST.md: list all key files (models, data, paper, logs) with brief description.
+	30 min
+	MANIFEST.md
+	Directory tree is clear; explains what each folder contains
+	Tag repository: git tag v1.0_submission_ready (or zip project_final.zip if not using git). Ensure all code, paper, outputs are included.
+	45 min
+	Committed tag or zip file
+	Tag/archive is complete; extractable and runnable on clean machine
+	Final sanity check: Run make clean && make all on a clean test subset. If it succeeds, release. If it fails, fix and re-tag.
+	120 min
+	Clean rebuild log
+	Rebuild completes without error; same outputs produced
+	Hard Deliverables:
+* README.md
+* docs/MANIFEST.md
+* docs/07_final_qa.md
+* Final paper outputs/draft_v1.pdf (locked)
+* Git tag v1.0_submission_ready or project_final.zip
+Decision Gate:
+* By EOD Day 15: Repository is clean, tagged, and verified reproducible. Paper is locked.
+Failure Signature:
+* Clean rebuild fails.
+* Numbers in PDF do not match outputs.
+* README is incomplete or hard to follow.
+Immediate Downgrade Action (CRITICAL):
+* If clean rebuild fails: DO NOT modify code. Document the failure and revert to last known good state (previous git commit). Tag that as submission-ready.
+* If numbers do not match: use correct numbers from CSV and re-export PDF; re-tag.
+* Do NOT extend Day 15 to debug. Lock what you have and ship.
+________________
+
+
+SECTION C — CRITICAL PATH & POINTS OF NO RETURN
+Top 5 Tasks Determining Project Survival
+Task 1: ERA5-Land Download & Validation (Days 2–3)
+* Why critical: No data → no project. Quality of data directly affects all downstream results.
+* What happens if it fails: Cannot proceed past Day 3. Entire pipeline stalls.
+* Latest possible fix day: End of Day 4 (one extra day of troubleshooting).
+* Fallback: Download only 5 years (2018–2022) instead of 10; document in paper as a limitation. Still publishable.
+Task 2: Sequence Builder without Temporal Leakage (Day 4)
+* Why critical: Leakage will make deep model appear artificially good; evaluation integrity is ruined.
+* What happens if it fails: Model metrics are meaningless. Paper is unpublishable.
+* Latest possible fix day: End of Day 5 (can rerun with corrected logic).
+* Fallback: Use manual train/val/test split by year (no fancy rolling windows); simpler, still valid.
+Task 3: Baseline Metrics Locked (Day 6–7)
+* Why critical: Without baselines, cannot claim improvement. Baselines are the foundation.
+* What happens if it fails: Deep model results have no context; paper claims are unjustified.
+* Latest possible fix day: End of Day 7 (mandatory gate).
+* Fallback: If RF underperforms, stick to persistence baseline only; acknowledge in paper.
+Task 4: Spatiotemporal Model Training Converges (Days 8–9)
+* Why critical: If ConvLSTM does not train or does not beat baselines, the core claim ("spatiotemporal ML improves nowcasting") collapses.
+* What happens if it fails: Project is a baseline study only (still publishable, but weaker).
+* Latest possible fix day: End of Day 9 (cannot spend more time tuning; must move to paper).
+* Fallback: If ConvLSTM fails, keep RF results and remove ConvLSTM from paper. Title becomes "ML-based nowcasting (non-spatial)" — still a valid contribution.
+Task 5: Paper First Draft Complete (Day 12–14)
+* Why critical: Without a draft, there is no output. Results without documentation are worthless.
+* What happens if it fails: No submission-ready document; project is incomplete.
+* Latest possible fix day: By EOD Day 14 (cannot extend).
+* Fallback: If Results/Discussion are incomplete, submit an abridged version with Methods + Results table + case studies only. Conclusion can be brief.
+________________
+
+
+Decision Tree for Downgrade Actions
+text
+Day 1–3: Data acquisition fails
+  → Reduce to 5 years (2018–2022)
+  → Or reduce region to single grid cell
+
+
+Day 4–5: Sequence builder is broken / leakage detected
+  → Rewrite using manual splits by year
+  → Test on one year manually before full run
+
+
+Day 6–7: Baselines do not converge / underperform
+  → Recheck preprocessing (Day 4 data integrity)
+  → Tune RF hyperparams (max_depth, n_estimators)
+  → If still broken: drop RF, keep persistence only
+
+
+Day 8–10: ConvLSTM training stalls / underfits
+  → Reduce model complexity (fewer layers, fewer channels)
+  → Reduce learning rate 10x, increase epochs
+  → If still fails: drop ConvLSTM from paper; keep RF as "advanced" baseline
+
+
+Day 11–12: Pipeline is not reproducible
+  → Simplify: replace Makefile with numbered bash scripts
+  → Focus on minimal reproducibility (data + train + eval)
+
+
+Day 13–15: Paper writing is slow
+  → Reduce case studies (1 event only)
+  → Shorten Discussion (focus on method, not interpretation)
+  → If time runs out: submit with incomplete Conclusion; note in README
+
+
+________________
+
+
+SECTION D — ARTIFACT DEPENDENCY TREE
+All Artifacts Produced During Execution
+text
+Legend:
+🔴 = Blocking (downstream tasks depend on this)
+🟡 = Replaceable (can be re-derived if corrupted)
+⚫ = Optional (nice to have; not critical)
+
+
+Phase 1: Configuration & Scope (Days 1–3)
+text
+config/project_scope.yaml [🔴] ← blocks Day 2–15 (defines region, period, vars)
+  ├── config/variables.yaml [🔴]
+  ├── docs/00_project_scope.md [🟡]
+  └── Blocks: data download scripts
+
+
+Phase 2: Raw Data (Days 2–4)
+text
+data/raw/sample_era5land_YYYYMMDD.nc [🔴] ← proof of concept
+  └── Blocks: preprocessing scripts
+
+
+data/raw/year=YYYY/era5land_YYYY.nc [🔴] × 10 years ← full dataset
+  ├── outputs/quick_stats.csv [🟡]
+  ├── notebooks/01_check_sample.ipynb [⚫]
+  ├── notebooks/02_annual_sanity.ipynb [⚫]
+  └── Blocks: sequence builder
+
+
+Phase 3: Preprocessed Data (Day 4)
+text
+scripts/build_sequences.py [🔴] ← deterministic builder
+  ├── data/processed/train_2015_2021.npz [🔴] ← blocks model training
+  ├── data/processed/val_2022.npz [🔴] ← blocks model validation
+  ├── data/processed/test_2023_2024.npz [🔴] ← blocks evaluation
+  ├── docs/01_preprocessing.md [🟡]
+  └── Blocks: all downstream modeling
+
+
+Phase 4: Baselines (Days 5–7)
+text
+models/baseline_persistence.py [🔴]
+models/baseline_random_forest.py [🔴]
+  ├── outputs/baseline_persistence_metrics.csv [🔴]
+  ├── outputs/baseline_rf_metrics.csv [🔴]
+  ├── outputs/baseline_summary_table.csv [🔴] ← reference for paper
+  ├── outputs/table_final_metrics.csv [🔴] ← inserted into Results section
+  ├── notebooks/03_baseline_inspection.ipynb [⚫]
+  ├── notebooks/04_baseline_comparison.ipynb [⚫]
+  ├── models/checkpoints/rf_models/ [🟡]
+  ├── docs/02_baseline_definition.md [🟡]
+  └── Blocks: paper Results section
+
+
+Phase 5: Spatiotemporal Model (Days 8–10)
+text
+models/conv_lstm.py [🔴]
+scripts/train_conv_lstm.py [🔴]
+  ├── models/checkpoints/conv_lstm_best.pt [🟡] ← saved for reproducibility
+  ├── outputs/conv_lstm_metrics.csv [🔴] ← inserted into Results
+  ├── outputs/training_plots/learning_curves_conv_lstm.png [🟡]
+  ├── logs/train_conv_lstm.log [⚫]
+  ├── notebooks/05_model_test.ipynb [⚫]
+  ├── notebooks/06_case_studies.ipynb [🔴] ← figures for paper
+  ├── docs/03_model_design.md [🟡]
+  ├── docs/04_evaluation.md [🟡]
+  └── Blocks: paper Results + Discussion sections
+
+
+Phase 6: Reproducibility (Days 11–12)
+text
+Makefile or scripts/run_pipeline.sh [🟡] ← optional but helpful
+requirements.txt or environment.yml [🟡]
+docs/05_reproducibility_guide.md [🟡]
+logs/dry_run.log [⚫]
+
+
+Phase 7: Paper (Days 12–15)
+text
+paper/main.tex or paper/main.md [🔴]
+  ├── Sections:
+  │   ├── Abstract [🔴]
+  │   ├── Introduction [🔴]
+  │   ├── Data [🔴] ← depends on config/ + quick_stats.csv
+  │   ├── Methods [🔴] ← depends on docs/03_model_design.md
+  │   ├── Results [🔴] ← depends on outputs/table_final_metrics.csv
+  │   ├── Discussion [🔴] ← depends on case studies + notebooks/06
+  │   ├── Conclusion [🔴]
+  │   └── References [🟡]
+  ├── Figures:
+  │   ├── region_map.png [🟡]
+  │   ├── learning_curves_conv_lstm.png [🟡]
+  │   ├── case_study_maps.png [🔴] ← from notebooks/06
+  │   └── metrics_comparison_bars.png [🟡]
+  ├── Tables:
+  │   ├── table_final_metrics [🔴] ← from outputs/
+  │   └── dataset_summary [🟡]
+  └── outputs/draft_v1.pdf [🔴] ← final deliverable
+
+
+Phase 8: Final Packaging (Day 15)
+text
+README.md [🟡]
+docs/MANIFEST.md [⚫]
+docs/06_consistency_check.md [⚫]
+docs/07_final_qa.md [⚫]
+project_final.zip or git tag v1.0_submission_ready [🔴] ← deliverable
+
+
+Dependency Relationships
+text
+Critical path:
+Day 1: config/ → Day 2–3: data/raw/ → Day 4: data/processed/ 
+  → Day 5–7: baselines metrics → Day 8–10: conv_lstm metrics 
+  → Day 12–14: paper/main.tex with all metrics/figures → Day 15: final PDF
+
+
+________________
+
+
+SECTION E — SCOPE ENFORCEMENT CONTRACT
+Absolutely Included (Non-Negotiable)
+1. ERA5-Land data over one Indian monsoon region (e.g., Kerala, Western Ghats)
+2. Hourly nowcasting at lead times 1h, 3h, 6h (no seasonal forecasting)
+3. Persistence baseline (mandatory comparison)
+4. Random Forest baseline (non-spatial ML)
+5. One spatiotemporal model (ConvLSTM or 3D CNN only; no ensembles, no transformers)
+6. Standard metrics: RMSE, MAE, Pearson correlation
+7. Clear evaluation protocol: train/val/test splits with NO temporal leakage
+8. Case study examples: 2–3 events with predicted vs actual maps
+9. Reproducible pipeline: single script/Makefile that regenerates results
+10. Paper-grade draft: complete sections (Introduction, Data, Methods, Results, Discussion, Conclusion)
+Explicitly Excluded (Even If Tempting)
+* ❌ Multi-region model (save for future work)
+* ❌ Radar or satellite imagery as input (only ERA5-Land)
+* ❌ Advanced architectures: ConvLSTM-U, Attention mechanisms, Transformers, Graph Networks, Ensembles
+* ❌ Hyperparameter optimization (AutoML, Bayesian optimization)
+* ❌ Real-time operational deployment or API
+* ❌ Comparison with official weather forecasts (NWP models)
+* ❌ Probabilistic forecasting or uncertainty quantification
+* ❌ Data assimilation
+* ❌ Multi-year climate change analysis
+* ❌ Custom DEM/topography feature engineering
+* ❌ Any feature requiring external datasets not explicitly listed above
+Deferred to Future Work (Must Not Leak In)
+* 🟡 Extending to 2–24 hour forecasts (medium-range, beyond nowcasting)
+* 🟡 Pan-India or multi-region generalization
+* 🟡 Integration with radar or satellite nowcasting products
+* 🟡 Operational deployment on edge devices
+* 🟡 Comparison with state-of-the-art deep learning systems (MetNet, DGMR, etc.)
+* 🟡 Seasonal rainfall prediction
+* 🟡 Extreme event forecasting (cyclones, flash floods as primary goal)
+________________
+
+
+⚠️ HOW THIS PROJECT DIES
+This project dies if any of the following happen and are not caught by Day 7:
+1. Data pipeline is corrupted (leakage, wrong units, time mismatch) and baseline metrics are garbage (RMSE is NaN or unreasonably high/low). By the time you realize this on Day 10, you've wasted 3 days on deep learning that is meaningless.
+   * Prevention: Lock baselines by Day 7 as a hard gate. If metrics look wrong, stop and debug immediately.
+2. Scope creep overwhelms schedule ("Let's also train a ConvLSTM-U with attention and ResNet features"). You end up with partial code and no paper.
+   * Prevention: Enforce the exclusion list above ruthlessly. If tempted, add to Future Work section and move on.
+3. Deep learning model does not beat baselines and you spend Days 8–11 trying to "fix" it instead of proceeding to paper writing.
+   * Prevention: By EOD Day 10, decide: if ConvLSTM beats RF, keep it; if not, drop it and write the paper with RF as the "advanced" baseline. Do not spend Days 11–15 trying to tune a failing model.
+4. Writing starts late (Day 13 only) and you realize the paper structure is broken or results sections are incoherent because you didn't write Data/Methods early.
+   * Prevention: Start paper skeleton on Day 12, not Day 13. By then, you have all metrics and figures; just insert them.
+5. Final reproducibility is broken (scripts reference hard-coded paths, or dependencies are missing) and you don't catch it until Day 15.
+   * Prevention: Dry-run the pipeline on Day 11 on a small subset. If it fails, fix before Day 12.
+6. You extend beyond 15 days because "just one more experiment" or "slight methodology improvement."
+   * Prevention: Day 15 is a hard stop. No extensions. If something is incomplete, document it as Future Work and ship.
+________________
+
+
+SECTION F — DAILY REALITY CHECK SUMMARY
+Day
+	Deliverable Status
+	Pass/Fail Condition
+	1
+	Configs + scope doc
+	Region, period, variables in YAML ✓
+	2
+	Sample ERA5-Land NetCDF
+	One day of data downloaded, xarray readable ✓
+	3
+	Full 10-year dataset + stats CSV
+	All years in data/raw/year=*/; missing% < 5% ✓
+	4
+	Train/val/test NPZ files
+	Shapes correct; no temporal leakage ✓
+	5
+	Persistence baseline metrics
+	RMSE > 0, r ∈ (-1, 1), CSV exists ✓
+	6
+	RF baseline metrics + comparison table
+	RF beats persistence; CSV created ✓
+	7
+	Baseline approval gate
+	Baselines solid; ConvLSTM green-light given ✓
+	8
+	ConvLSTM 5-epoch test
+	Model trains, loss decreases, checkpoint saved ✓
+	9
+	ConvLSTM full training + evaluation
+	Best model saved, metrics CSV created ✓
+	10
+	Final metrics table + case studies
+	9-row metrics table; 2+ case study figures ✓
+	11
+	Reproducible pipeline
+	Dry-run on reduced data succeeds ✓
+	12
+	Paper skeleton with Methods
+	Introduction + Data + Methods drafted ✓
+	13
+	Results + Discussion
+	Complete Results section with table/figs; Discussion written ✓
+	14
+	Full draft PDF
+	draft_v1.pdf compiles; consistency checked ✓
+	15
+	Final submission package
+	Tagged repo/zip; README complete; verification passed ✓
+	________________
+
+
+END OF ROADMAP ARTIFACT
