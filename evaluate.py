@@ -58,7 +58,7 @@ class WeatherNowcaster(nn.Module):
         super().__init__()
         self.encoder = nn.ModuleList([ConvLSTMCell(in_ch if i==0 else hidden_dim, hidden_dim, 3) for i in range(n_layers)])
         self.decoder = nn.ModuleList([ConvLSTMCell(out_ch if i==0 else hidden_dim, hidden_dim, 3) for i in range(n_layers)])
-        self.out_conv = nn.Conv2d(hidden_dim, out_ch, 1)
+        self.out_conv = nn.Conv2d(hidden_dim, out_ch, 3, padding=1)  # Must match training
     
     def forward(self, x, future_steps):
         B, T, C, H, W = x.shape
@@ -115,8 +115,9 @@ def get_test_batch():
 
     # Load random file
     idx = np.random.randint(0, len(files))
-    X = np.load(files[idx]) # (N, T, H, W, C)
-    Y = np.load(y_files[idx])
+    # Memory-mapped loading — avoids loading entire file into RAM
+    X = np.load(files[idx], mmap_mode='r')  # (N, T, H, W, C)
+    Y = np.load(y_files[idx], mmap_mode='r')
     
     # Select random batch
     n_samples = len(X)

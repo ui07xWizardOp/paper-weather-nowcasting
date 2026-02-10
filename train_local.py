@@ -2,25 +2,33 @@
 Local Training Script for Weather Nowcasting
 =============================================
 Run this locally on a machine with GPU to train the model.
+Optimized to utilize up to 12 GB system RAM via memory-mapped loading.
 
 Usage:
     python train_local.py
 
 Requirements:
     - PyTorch with CUDA support
-    - ~16GB GPU memory recommended (reduce BATCH_SIZE if needed)
+    - 12 GB+ system RAM (utilized via mmap caching)
     - Preprocessed data in data/batched/
 """
 
 import os
 import gc
 import glob
+import time
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, IterableDataset
 import matplotlib.pyplot as plt
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 # ============================================================================
 # CONFIGURATION
@@ -31,7 +39,9 @@ CHECKPOINT_DIR = os.path.join(SCRIPT_DIR, "checkpoints")
 FIGURES_DIR = os.path.join(SCRIPT_DIR, "figures")
 
 # Training parameters
-BATCH_SIZE = 16      # Reduce if running out of GPU memory
+BATCH_SIZE = 32      # Optimized for 12 GB RAM + GPU
+NUM_WORKERS = 4      # Parallel data loading workers
+PREFETCH_FACTOR = 4  # Batches prefetched per worker
 NUM_EPOCHS = 50
 LEARNING_RATE = 1e-3
 HIDDEN_DIM = 64
@@ -74,17 +84,20 @@ class BatchedWeatherDataset(IterableDataset):
             np.random.shuffle(batch_indices)
         
         for batch_idx in batch_indices:
-            X = np.load(self.x_files[batch_idx])
-            Y = np.load(self.y_files[batch_idx])
+            # Memory-mapped loading: OS caches pages in RAM automatically
+            # On a 12 GB system, the OS will keep ~10 GB of hot data cached
+            X = np.load(self.x_files[batch_idx], mmap_mode='r')
+            Y = np.load(self.y_files[batch_idx], mmap_mode='r')
             
             indices = list(range(len(X)))
             if self.shuffle:
                 np.random.shuffle(indices)
             
             for i in indices:
+                # Copy from mmap to contiguous array, then to tensor
                 # (T, H, W, C) -> (T, C, H, W)
-                x = torch.tensor(X[i], dtype=torch.float32).permute(0, 3, 1, 2)
-                y = torch.tensor(Y[i], dtype=torch.float32).permute(0, 3, 1, 2)
+                x = torch.from_numpy(np.array(X[i])).float().permute(0, 3, 1, 2)
+                y = torch.from_numpy(np.array(Y[i])).float().permute(0, 3, 1, 2)
                 yield x, y
 
 
@@ -168,17 +181,37 @@ class WeatherNowcaster(nn.Module):
 # ============================================================================
 # TRAINING
 # ============================================================================
+def print_ram_usage(label=""):
+    """Print current system RAM usage."""
+    if HAS_PSUTIL:
+        mem = psutil.virtual_memory()
+        print(f"  RAM [{label}]: {mem.used / 1e9:.1f} / {mem.total / 1e9:.1f} GB "
+              f"({mem.percent}% used, {mem.available / 1e9:.1f} GB available)")
+
+
 def train():
     print("=" * 60)
     print("LOCAL TRAINING FOR WEATHER NOWCASTING")
+    print("RAM-Optimized for 12 GB System")
     print("=" * 60)
+    
+    # System info
+    if HAS_PSUTIL:
+        mem = psutil.virtual_memory()
+        print(f"\nSystem RAM: {mem.total / 1e9:.1f} GB")
+        print(f"Available:  {mem.available / 1e9:.1f} GB")
+    else:
+        print("\nNote: Install psutil for RAM monitoring: pip install psutil")
     
     # Check CUDA
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nDevice: {device}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        # Enable convolution auto-tuning for consistent input sizes
+        torch.backends.cudnn.benchmark = True
+        print("cudnn.benchmark: enabled")
     else:
         print("WARNING: No GPU detected. Training will be slow!")
     
@@ -195,12 +228,28 @@ def train():
     print(f"Mean: {mean}")
     print(f"Std: {std}")
     
-    # Create datasets
+    # Create datasets with memory-mapped loading
     train_dataset = BatchedWeatherDataset(DATA_DIR, 'train', shuffle=True)
     val_dataset = BatchedWeatherDataset(DATA_DIR, 'val', shuffle=False)
     
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+    # DataLoader tuned for 12 GB RAM:
+    # - num_workers=4: parallel I/O (each uses ~200 MB)
+    # - prefetch_factor=4: keeps pipeline full
+    # - persistent_workers: avoids re-spawn overhead per epoch
+    # - pin_memory: faster CPU->GPU transfer
+    loader_kwargs = dict(
+        batch_size=BATCH_SIZE,
+        num_workers=NUM_WORKERS,
+        prefetch_factor=PREFETCH_FACTOR,
+        persistent_workers=True,
+        pin_memory=torch.cuda.is_available(),
+    )
+    train_loader = DataLoader(train_dataset, **loader_kwargs)
+    val_loader = DataLoader(val_dataset, **loader_kwargs)
+    
+    print(f"\nDataLoader: {NUM_WORKERS} workers, prefetch={PREFETCH_FACTOR}, "
+          f"persistent=True, pin_memory={torch.cuda.is_available()}")
+    print_ram_usage("after DataLoader init")
     
     # Create model
     print("\n[2/4] Creating model...")
@@ -249,6 +298,7 @@ def train():
             
             if (batch_idx + 1) % 500 == 0:
                 print(f"  Epoch {epoch+1}, Batch {batch_idx+1}, Loss: {loss.item():.6f}")
+                print_ram_usage(f"E{epoch+1}B{batch_idx+1}")
         
         train_loss /= n_batches
         train_losses.append(train_loss)
