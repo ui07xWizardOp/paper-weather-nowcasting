@@ -154,6 +154,19 @@ def main():
                 cell['source'] = new_src.splitlines(True)
                 print("  Updated output conv to 3x3")
 
+    # 0.5 Update Config Cell
+    print("Updating Config Cell...")
+    for i, cell in enumerate(nb['cells']):
+        src = "".join(cell.get('source', []))
+        if "STRIDE = 6" in src:
+             nb['cells'][i]['source'] = [src.replace("STRIDE = 6", "STRIDE = 12")]
+             print("  Updated STRIDE to 12 in Config Cell")
+
+    # ... (existing Preprocessing / Data Copy / Auto-Resume logic) ...
+
+    # Duplicate Benchmark Update Removed
+
+
     # 1.5 Global Fix: Add stride=12 to create_sequences (reduces 95.8% overlap to 50%)
     print("Applying global fix for sequence stride...")
     for cell in nb['cells']:
@@ -162,10 +175,192 @@ def main():
             if "def create_sequences(data, t_in, t_out):" in src and "for i in range(t_in, n - t_out + 1):" in src:
                 new_src = src.replace(
                     "for i in range(t_in, n - t_out + 1):",
-                    "STRIDE = 12  # Reduce overlap from 95.8% to 50%\n        for i in range(t_in, n - t_out + 1, STRIDE):"
+                    "# Use STRIDE from Config\n        for i in range(t_in, n - t_out + 1, STRIDE):"
                 )
                 cell['source'] = new_src.splitlines(True)
-                print("  Updated create_sequences with stride=12")
+                print("  Updated create_sequences to use global STRIDE")
+
+    # 1.6 Global Fix: Add log1p transform for precipitation before normalization
+    print("Applying global fix for log1p precipitation transform...")
+    for cell in nb['cells']:
+        if cell['cell_type'] == 'code':
+            src = "".join(cell.get('source', []))
+            if "data = np.nan_to_num(data, nan=0.0)" in src and "data = (data - mean) / std" in src:
+                new_src = src.replace(
+                    "data = np.nan_to_num(data, nan=0.0)\n            data = (data - mean) / std",
+                    "data = np.nan_to_num(data, nan=0.0)\n            # Log1p transform precipitation (channel 0) to compress heavy tail\n            data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n            data = (data - mean) / std"
+                )
+                cell['source'] = new_src.splitlines(True)
+                print("  Added log1p transform for precipitation channel")
+
+    # 1.6b: Also apply log1p in stats computation pass
+    for cell in nb['cells']:
+        if cell['cell_type'] == 'code':
+            src = "".join(cell.get('source', []))
+            if "train_values.append(data[::24])" in src and "data = extract_vars(ds)" in src:
+                new_src = src.replace(
+                    "if data is not None:\n                    # Sample every 24th hour to reduce memory\n                    train_values.append(data[::24])",
+                    "if data is not None:\n                    # Log1p transform precipitation before computing stats\n                    data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n                    # Sample every 24th hour to reduce memory\n                    train_values.append(data[::24])"
+                )
+                cell['source'] = new_src.splitlines(True)
+                print("  Added log1p to stats computation pass")
+
+    # 1.7 Inject Data Copy Cell (Critical for Speed)
+    resume_idx = -1
+    for i, cell in enumerate(nb['cells']):
+        if "Auto-Resume Logic" in "".join(cell.get('source', [])):
+            resume_idx = i
+            break
+
+    data_copy_code = [
+        "# Cell: High-Speed Data caching (Drive -> Local)\n",
+        "# Copying data to local VM speed up training by 10x\n",
+        "import shutil\n",
+        "import os\n",
+        "\n",
+        "DRIVE_DATA = '/content/drive/MyDrive/WeatherPaper/data/batched'\n",
+        "LOCAL_DATA = '/content/data/batched'\n",
+        "# Fallback text path from Cell 1 setup\n",
+        "DEFAULT_DATA = '/content/weather_nowcasting/data/batched'\n",
+        "\n",
+        "if not os.path.exists(LOCAL_DATA) and os.path.exists(DRIVE_DATA):\n",
+        "    print(f'⏳ Copying data from Drive to Local Disk... (This takes ~2-3 mins)')\n",
+        "    print(f'   Source: {DRIVE_DATA}')\n",
+        "    print(f'   Dest:   {LOCAL_DATA}')\n",
+        "    try:\n",
+        "        shutil.copytree(DRIVE_DATA, LOCAL_DATA)\n",
+        "        print('✓ Data copied! Training will be fast now.')\n",
+        "        BATCHED_DIR = LOCAL_DATA\n",
+        "    except Exception as e:\n",
+        "        print(f'⚠️ Copy failed: {e}. Using default path.')\n",
+        "        BATCHED_DIR = DEFAULT_DATA\n",
+        "elif os.path.exists(LOCAL_DATA):\n",
+        "    print('✓ Local data already exists.')\n",
+        "    BATCHED_DIR = LOCAL_DATA\n",
+        "elif os.path.exists(DEFAULT_DATA):\n",
+        "    print('✓ Using generated data in workspace.')\n",
+        "    BATCHED_DIR = DEFAULT_DATA\n",
+        "else:\n",
+        "    print(f'⚠️ Warning: Data not found at {DRIVE_DATA} or {LOCAL_DATA}')\n",
+        "    print('   Please ensure you uploaded data/batched to Drive/WeatherPaper/data/batched')\n",
+        "    BATCHED_DIR = DEFAULT_DATA # Attempt to continue\n",
+        "\n",
+        "print(f'Data Source: {BATCHED_DIR}')\n"
+    ]
+
+    if resume_idx != -1:
+        # Check if already inserted
+        next_cell = nb['cells'][resume_idx + 1] if resume_idx + 1 < len(nb['cells']) else {}
+        if "High-Speed Data caching" in "".join(next_cell.get('source', [])):
+             print("Data Copy cell already present, updating...")
+             nb['cells'][resume_idx + 1]['source'] = data_copy_code
+        else:
+             new_cell = {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": data_copy_code
+             }
+             nb['cells'].insert(resume_idx + 1, new_cell)
+             print(f"Injected Data Copy Logic after cell {resume_idx}")
+
+    # 1.8 Replace Auto-Resume Logic (Robust against shape mismatch)
+    print("Updating Auto-Resume Logic...")
+    for i, cell in enumerate(nb['cells']):
+        src = "".join(cell.get('source', []))
+        if "Auto-Resume Logic" in src:
+            nb['cells'][i]['source'] = [
+                "# Cell: Auto-Resume Logic & Drive Mounting\n",
+                "import os\n",
+                "import torch\n",
+                "try:\n",
+                "    from google.colab import drive\n",
+                "    drive.mount('/content/drive')\n",
+                "    print('\u2713 Google Drive mounted')\n",
+                "    CHECKPOINT_DIR = '/content/drive/MyDrive/WeatherPaper/checkpoints'\n",
+                "    os.makedirs(CHECKPOINT_DIR, exist_ok=True)\n",
+                "    print(f'\u2713 Checkpoints will be saved to: {CHECKPOINT_DIR}')\n",
+                "except ImportError:\n",
+                "    print('\u26a0\ufe0f Not running in Colab, using local paths')\n",
+                "    CHECKPOINT_DIR = 'checkpoints'\n",
+                "\n",
+                "train_losses, val_losses = [], []\n",
+                "RESUME_FROM = None\n",
+                "start_epoch = 0\n",
+                "\n",
+                "# Check for existing LAST checkpoint\n",
+                "if os.path.exists(f'{CHECKPOINT_DIR}/last.pth'):\n",
+                "    RESUME_FROM = f'{CHECKPOINT_DIR}/last.pth'\n",
+                "elif os.path.exists(f'{CHECKPOINT_DIR}/best_model.pth'):\n",
+                "    RESUME_FROM = f'{CHECKPOINT_DIR}/best_model.pth'\n",
+                "\n",
+                "if RESUME_FROM and os.path.exists(RESUME_FROM):\n",
+                "    print(f'Loading checkpoint: {RESUME_FROM}')\n",
+                "    try:\n",
+                "        checkpoint = torch.load(RESUME_FROM, map_location='cuda' if torch.cuda.is_available() else 'cpu')\n",
+                "        if 'model' in checkpoint:\n",
+                "            model.load_state_dict(checkpoint['model'])\n",
+                "        else:\n",
+                "            model.load_state_dict(checkpoint)\n",
+                "        \n",
+                "        if 'train_losses' in checkpoint:\n",
+                "            train_losses = checkpoint['train_losses']\n",
+                "            val_losses = checkpoint['val_losses']\n",
+                "        if 'epoch' in checkpoint:\n",
+                "            start_epoch = checkpoint['epoch'] + 1\n",
+                "            print(f'Resuming from epoch {start_epoch}')\n",
+                "        else:\n",
+                "            print('Warning: Epoch info not found, fine-tuning from 0')\n",
+                "    except RuntimeError as e:\n",
+                "        print(f'\\n\u26a0\ufe0f Checkpoint mismatch (expected due to architecture change): {e}')\n",
+                "        print('\u27f3 Starting fresh training from epoch 0...')\n",
+                "        # Re-init model to be safe\n",
+                "        model = WeatherNowcaster(IN_CHANNELS, HIDDEN_DIM, OUT_CHANNELS, n_layers=2).to(device)\n",
+                "        model.apply(init_weights)  # Re-apply Kaiming init\n",
+                "        start_epoch = 0\n"
+            ]
+            print(f"  Updated Auto-Resume Logic at index {i}")
+            break
+
+    # 2. Update Cell 6: Benchmark & Model Def
+    cell_6_idx = -1
+    for i, cell in enumerate(nb['cells']):
+        src = "".join(cell.get('source', []))
+        if "Benchmarking model" in src:  # Removed 'batch_generator' check as it might be replaced by global fix
+            cell_6_idx = i
+            # Replace batch_generator call with loader (if not already done)
+            new_src = src.replace("batch_generator('train')", "get_loader('train', shuffle=True)")
+            # Append init_weights definition here so it's available for Resume Logic
+            # Check if init_weights is already present to avoid duplication
+            if "def init_weights(m):" not in new_src:
+                 new_src += "\n# Proper weight initialization\ndef init_weights(m):\n    if isinstance(m, nn.Conv2d):\n        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')\n        if m.bias is not None:\n            nn.init.zeros_(m.bias)\n"
+            nb['cells'][i]['source'] = new_src.splitlines(True)
+            print("  Updated Cell 6 (Benchmark + Model init_weights)")
+
+    # 3. Replace Training Loop (Cell 7)
+    cell_loop_idx = -1
+    for i, cell in enumerate(nb['cells']):
+        if "Cell 7: Training Loop" in "".join(cell.get('source', [])):
+            cell_loop_idx = i
+            
+            new_lines = []
+            new_lines.append("# Cell 7: Training Loop with AMP + Weighted Loss\n")
+            new_lines.append("import torch.nn.functional as F\n")
+            new_lines.append("\n")
+            new_lines.append("# WeightedMSE: upweight non-zero precipitation cells\n")
+            new_lines.append("class WeightedMSE(nn.Module):\n")
+            new_lines.append("    def __init__(self, zero_weight=1.0, nonzero_weight=10.0, threshold=0.1):\n")
+            new_lines.append("        super().__init__()\n")
+            new_lines.append("        self.zero_weight = zero_weight\n")
+            new_lines.append("        self.nonzero_weight = nonzero_weight\n")
+            new_lines.append("        self.threshold = threshold\n")
+            new_lines.append("    def forward(self, pred, target):\n")
+            new_lines.append("        weight = torch.where(target.abs() > self.threshold,\n")
+            new_lines.append("                             self.nonzero_weight, self.zero_weight)\n")
+            new_lines.append("        return (weight * (pred - target) ** 2).mean()\n")
+            new_lines.append("\n")
+            new_lines.append("# SSIMLoss with corrected constants for z-scored data\n")
 
     # 1.6 Global Fix: Add log1p transform for precipitation before normalization
     print("Applying global fix for log1p precipitation transform...")
@@ -253,20 +448,65 @@ def main():
              nb['cells'].insert(resume_idx + 1, new_cell)
              print(f"Injected Data Copy Logic after cell {resume_idx}")
 
-    # 2. Update Cell 6: Benchmark
-    # Find cell with "Benchmarking model"
-    cell_6_idx = -1
+    # 1.8 Replace Auto-Resume Logic (Robust against shape mismatch)
+    print("Updating Auto-Resume Logic...")
     for i, cell in enumerate(nb['cells']):
         src = "".join(cell.get('source', []))
-        if "Benchmarking model" in src and "batch_generator" in src:
-            cell_6_idx = i
-            # Replace batch_generator call with loader
-            new_src = src.replace("batch_generator('train')", "get_loader('train', shuffle=True)")
-            # Also update the benchmark loop print
-            new_src = new_src.replace("print('\\nBenchmarking model...')", "print('\\nBenchmarking model with DataLoader...')")
-            nb['cells'][cell_6_idx]['source'] = new_src.splitlines(True) # Ensure list of lines
-            print(f"Updated Benchmark in Cell {cell_6_idx}")
+        if "Auto-Resume Logic" in src:
+            nb['cells'][i]['source'] = [
+                "# Cell: Auto-Resume Logic & Drive Mounting\n",
+                "import os\n",
+                "import torch\n",
+                "try:\n",
+                "    from google.colab import drive\n",
+                "    drive.mount('/content/drive')\n",
+                "    print('\u2713 Google Drive mounted')\n",
+                "    CHECKPOINT_DIR = '/content/drive/MyDrive/WeatherPaper/checkpoints'\n",
+                "    os.makedirs(CHECKPOINT_DIR, exist_ok=True)\n",
+                "    print(f'\u2713 Checkpoints will be saved to: {CHECKPOINT_DIR}')\n",
+                "except ImportError:\n",
+                "    print('\u26a0\ufe0f Not running in Colab, using local paths')\n",
+                "    CHECKPOINT_DIR = 'checkpoints'\n",
+                "\n",
+                "train_losses, val_losses = [], []\n",
+                "RESUME_FROM = None\n",
+                "start_epoch = 0\n",
+                "\n",
+                "# Check for existing LAST checkpoint\n",
+                "if os.path.exists(f'{CHECKPOINT_DIR}/last.pth'):\n",
+                "    RESUME_FROM = f'{CHECKPOINT_DIR}/last.pth'\n",
+                "elif os.path.exists(f'{CHECKPOINT_DIR}/best_model.pth'):\n",
+                "    RESUME_FROM = f'{CHECKPOINT_DIR}/best_model.pth'\n",
+                "\n",
+                "if RESUME_FROM and os.path.exists(RESUME_FROM):\n",
+                "    print(f'Loading checkpoint: {RESUME_FROM}')\n",
+                "    try:\n",
+                "        checkpoint = torch.load(RESUME_FROM, map_location='cuda' if torch.cuda.is_available() else 'cpu')\n",
+                "        if 'model' in checkpoint:\n",
+                "            model.load_state_dict(checkpoint['model'])\n",
+                "        else:\n",
+                "            model.load_state_dict(checkpoint)\n",
+                "        \n",
+                "        if 'train_losses' in checkpoint:\n",
+                "            train_losses = checkpoint['train_losses']\n",
+                "            val_losses = checkpoint['val_losses']\n",
+                "        if 'epoch' in checkpoint:\n",
+                "            start_epoch = checkpoint['epoch'] + 1\n",
+                "            print(f'Resuming from epoch {start_epoch}')\n",
+                "        else:\n",
+                "            print('Warning: Epoch info not found, fine-tuning from 0')\n",
+                "    except RuntimeError as e:\n",
+                "        print(f'\\n\u26a0\ufe0f Checkpoint mismatch (expected due to architecture change): {e}')\n",
+                "        print('\u27f3 Starting fresh training from epoch 0...')\n",
+                "        # Re-init model to be safe\n",
+                "        model = WeatherNowcaster(IN_CHANNELS, HIDDEN_DIM, OUT_CHANNELS, n_layers=2).to(device)\n",
+                "        model.apply(init_weights)  # Re-apply Kaiming init\n",
+                "        start_epoch = 0\n"
+            ]
+            print(f"  Updated Auto-Resume Logic at index {i}")
             break
+
+    # Duplicate Benchmark Update Removed (Logic moved to top of file)
 
     # 3. Update Cell 8: Training Loop (It might be index 8 now due to resume cell)
     # Find cell with "Training Loop"
@@ -329,28 +569,28 @@ def main():
             new_lines.append("ssim_criterion = SSIMLoss(window_size=7, data_range=6.0)\n")
             new_lines.append("mae_criterion = nn.L1Loss()\n")
             new_lines.append("def criterion(pred, target):\n")
-            new_lines.append("    return 0.5 * wmse_criterion(pred, target) + 0.3 * ssim_criterion(pred, target) + 0.2 * mae_criterion(pred, target)\n")
+            new_lines.append("    # Fine-tuning: 0.4 WMSE + 0.3 SSIM + 0.3 MAE\n")
+            new_lines.append("    return 0.4 * wmse_criterion(pred, target) + 0.3 * ssim_criterion(pred, target) + 0.3 * mae_criterion(pred, target)\n")
             new_lines.append("\n")
-            # Kaiming weight initialization
-            new_lines.append("# Proper weight initialization\n")
-            new_lines.append("def init_weights(m):\n")
-            new_lines.append("    if isinstance(m, nn.Conv2d):\n")
-            new_lines.append("        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')\n")
-            new_lines.append("        if m.bias is not None:\n")
-            new_lines.append("            nn.init.zeros_(m.bias)\n")
-            new_lines.append("\n")
+            # Proper weight initialization is now in Cell 6
+            # new_lines.append("def init_weights(m):\n") ... REMOVED
             new_lines.append("if start_epoch == 0:  # Only init if not resuming\n")
             new_lines.append("    model.apply(init_weights)\n")
             new_lines.append("    print('Applied Kaiming weight initialization')\n")
             new_lines.append("\n")
-            new_lines.append("optimizer = optim.Adam(model.parameters(), lr=1e-4)\n")
-            new_lines.append("scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=40, eta_min=1e-6)\n")
+            new_lines.append("optimizer = optim.Adam(model.parameters(), lr=2e-5)\n")
+            new_lines.append("scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-6)\n")
             new_lines.append("\n")
-            new_lines.append("NUM_EPOCHS = 40\n")
-            new_lines.append("PATIENCE = 8\n")  # Increased patience since learning should be slower
+            new_lines.append("NUM_EPOCHS = 100\n")
+            new_lines.append("PATIENCE = 20\n")  # Increased patience for fine-tuning
             new_lines.append("patience_counter = 0\n")
             new_lines.append("best_val_loss = float('inf')\n")
-            new_lines.append("train_losses, val_losses = [], []\n")
+            # new_lines.append("train_losses, val_losses = [], []\n") # Moved to Resume Cell
+            new_lines.append("\n")
+            new_lines.append("if len(train_losses) > 0 and start_epoch > 0:\n")
+            new_lines.append("    print('Restoring training history...')\n")
+            new_lines.append("    for i in range(len(train_losses)):\n")
+            new_lines.append("        print(f'Epoch {i+1:2d} | Train: {train_losses[i]:.6f} | Val: {val_losses[i]:.6f}')\n")
             new_lines.append("\n")
             new_lines.append("print(f'Training Configuration:')\n")
             new_lines.append("print(f'  Epochs: {NUM_EPOCHS}')\n")
@@ -381,7 +621,7 @@ def main():
             new_lines.append("        \n")
             new_lines.append("        with torch.amp.autocast('cuda'):\n")
             new_lines.append("            out = model(x, T_OUT)\n")
-            new_lines.append("            loss = criterion(out, y)\n")
+            new_lines.append("            loss = criterion(out.float(), y.float())\n")
             new_lines.append("        \n")
             new_lines.append("        scaler.scale(loss).backward()\n")
             new_lines.append("        scaler.unscale_(optimizer)\n")
@@ -407,7 +647,7 @@ def main():
             new_lines.append("        for x, y in pbar:\n")
             new_lines.append("            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)\n")
             new_lines.append("            with torch.amp.autocast('cuda'):\n")
-            new_lines.append("                val_loss += criterion(model(x, T_OUT), y).item()\n")
+            new_lines.append("                val_loss += criterion(model(x, T_OUT).float(), y.float()).item()\n")
             new_lines.append("            n_val += 1\n")
             new_lines.append("    \n")
             new_lines.append("    val_loss /= n_val if n_val > 0 else 1\n")
@@ -621,6 +861,27 @@ def main():
                 "plt.show()"
             ]
             print(f"  Updated test cell at index {i}")
+            break
+
+    # 7. Replace Cell 10: Save Final Model (Fix checkpoint key)
+    print("Updating final model save cell...")
+    for i, cell in enumerate(nb['cells']):
+        src = "".join(cell.get('source', []))
+        if "Save Final Model" in src and "torch.save" in src:
+            nb['cells'][i]['source'] = [
+                "# Cell 10: Save Final Model\n",
+                "torch.save({\n",
+                "    'model': model.state_dict(),  # Key fixed to match evaluate.py\n",
+                "    'config': {'hidden_dim': HIDDEN_DIM, 'n_layers': 2, 'T_IN': T_IN, 'T_OUT': T_OUT},\n",
+                "    'mean': mean, 'std': std, 'variables': variables,\n",
+                "    'best_val_loss': best_val_loss,\n",
+                "    'train_losses': train_losses, 'val_losses': val_losses\n",
+                "}, f'{CHECKPOINT_DIR}/final_model.pth')\n",
+                "\n",
+                "print(f'\u2713 Saved to: {CHECKPOINT_DIR}/final_model.pth')\n",
+                "print(f'Best validation loss: {best_val_loss:.6f}')"
+            ]
+            print(f"  Updated final save cell at index {i}")
             break
 
     with open(OUTPUT_NB, 'w', encoding='utf-8') as f:
