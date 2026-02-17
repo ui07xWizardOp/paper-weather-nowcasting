@@ -1,0 +1,25 @@
+# Computational Complexity Analysis (Phase 8)
+
+\begin{equation}
+\label{eq:complexity_convlstm}
+O_{ConvLSTM} \approx O(T \cdot K^2 \cdot H \cdot W \cdot C_{in} \cdot C_{out})
+\end{equation}
+
+where:
+-   $T$: Sequence Length (Input + Output frames)
+-   $K$: Kernel Size ($3 \times 3$)
+-   $H, W$: Spatial Dimensions ($31 \times 41$)
+-   $C_{in}, C_{out}$: Channel Dimensions (64, 128)
+
+**Comparison with Vision Transformers (ViT):**
+Standard Self-Attention has a quadratic complexity with respect to the number of tokens (pixels):
+\begin{equation}
+\label{eq:complexity_vit}
+O_{ViT} \approx O(T \cdot (H \cdot W)^2 \cdot C)
+\end{equation}
+
+**Efficiency Argument:**
+For our grid size $N = H \cdot W \approx 1200$:
+-   **ConvLSTM**: Linear scaling with $N$ ($O(N)$).
+-   **Transformer**: Quadratic scaling with $N$ ($O(N^2)$).
+-   **Impact**: ConvLSTM is computationally feasible on a single T4 GPU, whereas a pure Transformer would require significantly more VRAM for the attention map $A \in \mathbb{R}^{N \times N}$.

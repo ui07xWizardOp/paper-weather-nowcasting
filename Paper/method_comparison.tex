@@ -1,0 +1,17 @@
+\begin{table}[htbp]
+\caption{Comparison of Deep Learning Methods for Precipitation Nowcasting}
+\label{tab:method_comparison}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llp{3cm}ll@{}}
+\toprule
+Method & Core Idea & Strength & Weakness & Probabilistic? \\ \midrule
+ConvLSTM \citep{Shi2015} & Convolutional RNN & Spatiotemporal modeling & Blurry predictions & No \\
+TrajGRU \citep{Shi2017} & Trajectory-aware RNN & Handles motion transform & Complex training & No \\
+U-Net \citep{Ronneberger2015} & Encoder-Decoder CNN & Fast inference & No temporal memory & No \\
+PredRNN \citep{Wang2017} & Spatiotemporal LSTM & Long-term dependency & Computational cost & No \\
+DGMR \citep{Ravuri2021} & GAN + Sampler & Sharp details & Hard to converge & Yes \\
+\textbf{Ours} & \textbf{ConvLSTM + WMSE} & \textbf{Physically grounded loss} & \textbf{Deterministic} & \textbf{No} \\ \bottomrule
+\end{tabular}%
+}
+\end{table}

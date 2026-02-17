@@ -218,11 +218,13 @@ Raw NetCDF Files (144 files, ~2GB total)
          ↓
     [Extract Variables] → tp, t2m arrays
          ↓
-    [Compute Normalization Statistics] → mean, std
+    [Log1p Transform] → log1p(tp) for skewness handling
          ↓
-    [Normalize Data] → zero-mean, unit-variance
+    [Compute Normalization Statistics] → mean, std (from log-transformed training data)
          ↓
-    [Create Sequences] → (X: 24h input, Y: 6h output)
+    [Normalize Data] → zero-mean, unit-variance (Z-score)
+         ↓
+    [Create Sequences] → (X: 24h input, Y: 6h output) with STRIDE=12 (50% overlap)
          ↓
     [Split by Year] → Train (2015-2021), Val (2022-2023), Test (2024-2025)
          ↓
@@ -256,12 +258,17 @@ Where:
 **Important**: Statistics are computed **only from training data** (2015-2021) to prevent data leakage.
 
 ```python
-# Compute from training data only
+# 1. Log-transform precipitation first to handle extreme skewness
+# tp values range from 0 to >0.05, spanning orders of magnitude
+if var == 'tp':
+    data = np.log1p(np.maximum(data, 0))
+
+# 2. Compute from training data only
 mean = np.nanmean(train_data, axis=(0, 1, 2))  # Mean per variable
 std = np.nanstd(train_data, axis=(0, 1, 2))    # Std per variable
 std[std < 1e-6] = 1.0  # Prevent division by zero
 
-# Apply to all splits
+# 3. Apply to all splits
 normalized_data = (data - mean) / std
 ```
 
@@ -291,7 +298,7 @@ Hour:    0  1  2  3  ... 23 24 25 26 27 28 29 30 31 32 ...
 **Parameters**:
 - `T_IN = 24`: Input sequence length (24 hours = 1 day of historical context)
 - `T_OUT = 6`: Output sequence length (6-hour forecast horizon)
-- `STRIDE = 1`: Step size between consecutive sequences
+- `STRIDE = 12`: Step size between consecutive sequences (**50% overlap**). Changed from stride=1 to reduce data redundancy and focus on distinct weather events.
 
 #### 4.3.3 Why 24 Hours Input?
 
@@ -564,6 +571,8 @@ For t = 1 to 6:
 Output: Y = [y_1, y_2, ..., y_6]  (6 predicted weather frames)
 ```
 
+**Note**: The OutputConv layer uses a **3x3 kernel with padding=1** (fixed from 1x1) to capture local spatial context in the final decoding step.
+
 #### 5.4.4 Full Architecture Diagram
 
 ```
@@ -588,6 +597,7 @@ Output: Y = [y_1, y_2, ..., y_6]  (6 predicted weather frames)
 | Hidden dimension | 128 | Balances capacity vs. memory; enough to model complex patterns |
 | Number of layers | 2 | Captures hierarchical features without overfitting |
 | Kernel size | 3 × 3 | Standard size; captures local spatial context |
+| **Weight Init** | **Kaiming Normal** | **He initialization** (mode='fan_out', nonlinearity='relu') applied to all Conv2d layers. Critical for convergence in deep networks. |
 | Input channels | 2 | tp and t2m variables |
 | Output channels | 2 | Predict both variables |
 
@@ -597,34 +607,36 @@ Output: Y = [y_1, y_2, ..., y_6]  (6 predicted weather frames)
 
 ## 6. Training Methodology
 
-### 6.1 Loss Function: Mean Squared Error (MSE)
+### 6.1 Hybrid Loss Function
 
-#### 6.1.1 Definition
+We moved away from simple MSE to a **Hybrid Loss** that balances pixel accuracy, structural consistency, and robustness.
 
-$$
-\mathcal{L}_{MSE} = \frac{1}{N} \sum_{i=1}^{N} (y_i - \hat{y}_i)^2
-$$
+#### 6.1.1 The Formula
 
-Where:
-- $y_i$ is the ground truth value
-- $\hat{y}_i$ is the predicted value
-- $N$ is the total number of values (all pixels, timesteps, and variables)
+$$ \mathcal{L}_{total} = 0.5 \cdot \mathcal{L}_{WMSE} + 0.3 \cdot \mathcal{L}_{SSIM} + 0.2 \cdot \mathcal{L}_{MAE} $$
 
-#### 6.1.2 Why MSE?
+#### 6.1.2 Component Breakdown
 
-1. **Differentiable everywhere**: Enables gradient-based optimization
-2. **Penalizes large errors more**: Squared term emphasizes large deviations
-3. **Standard for regression**: Well-understood properties
-4. **Directly related to RMSE**: $RMSE = \sqrt{MSE}$, a common evaluation metric
+1.  **Weighted MSE (WMSE)**
+    *   **Purpose**: Focus learning on rain events (which are sparse).
+    *   **Logic**: 10× weight applied to pixels where `tp > threshold`.
+    *   **Threshold**: Calculated physically from log-transformed stats. `threshold = (log1p(0.001) - mean_tp) / std_tp`. This targets rainfall > 1mm/hr.
+    *   **Channel Specific**: Weights applied *only* to the precipitation channel (index 0).
 
-#### 6.1.3 Why Not Other Losses?
+2.  **SSIM (Structural Similarity Index)**
+    *   **Purpose**: Prevent "blurry" predictions common with MSE. Enforces structural sharpness.
+    *   **Calibration**: Standard SSIM assumes data in [0, 1]. Our data is Z-scored (roughly [-3, 3]).
+    *   **Fix**: We set `data_range=6.0` (spanning -3 to +3 σ) to correctly calibrate the SSIM window.
+    *   **Implementation**: Uses a 3x3 Gaussian window with sigma=1.5.
 
-| Alternative | Problem |
-|-------------|---------|
-| **MAE (L1)** | Gradients are constant; slower convergence; doesn't penalize large errors as strongly |
-| **Huber Loss** | Extra hyperparameter (delta); benefits mainly data with outliers |
-| **Cross-Entropy** | For classification; our task is regression |
-| **Custom precipitation loss** | Would require careful balancing; MSE is robust baseline |
+3.  **MAE (Mean Absolute Error)**
+    *   **Purpose**: Robustness to outliers. MSE squares errors (penalizing outliers heavily), leading to instability. MAE provides a stable gradient for extreme values.
+
+#### 6.1.3 Why this Combination?
+*   **MSE alone**: Too blurry, misses light rain.
+*   **SSIM alone**: Insensitive to uniform bias.
+*   **Weighted MSE alone**: Can cause exploding gradients on outliers.
+*   **Hybrid**: Balances spatial structure (SSIM), event detection (WMSE), and stability (MAE).
 
 ### 6.2 Optimizer: Adam
 
@@ -644,12 +656,12 @@ $$\theta_t = \theta_{t-1} - \frac{\alpha \hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}
 #### 6.2.2 Our Adam Configuration
 
 ```python
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
+optimizer = optim.Adam(model.parameters(), lr=5e-5)
 ```
 
 | Parameter | Value | Default | Notes |
 |-----------|-------|---------|-------|
-| Learning rate (α) | 0.001 | 0.001 | Standard for ConvLSTM |
+| Learning rate (α) | **5e-5** | 0.001 | Reduced from 1e-3 to prevent instability with Combined Loss |
 | β₁ | 0.9 | 0.9 | Momentum coefficient |
 | β₂ | 0.999 | 0.999 | RMSprop coefficient |
 | ε | 1e-8 | 1e-8 | Numerical stability |
@@ -671,7 +683,7 @@ Reduces learning rate when validation loss stops improving.
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, 
     mode='min',      # Reduce when metric stops decreasing
-    patience=5,      # Wait 5 epochs before reducing
+    patience=8,      # Increased from 5 -> 8 (slower learning with hybrid loss)
     factor=0.5       # Multiply LR by 0.5
 )
 ```
@@ -755,6 +767,7 @@ for epoch in range(NUM_EPOCHS):
 #### 7.1.3 Implementation
 
 ```python
+```python
 from torch.cuda.amp import autocast, GradScaler
 
 scaler = GradScaler()
@@ -765,8 +778,15 @@ for x, y in dataloader:
     # Forward pass in FP16
     with autocast():
         predictions = model(x, T_OUT)
-        loss = criterion(predictions, y)
+        # CRITICAL: Cast to float32 for loss calculation to prevent -inf/nan
+        # SSIM involves variances that can underflow in FP16
+        loss = criterion(predictions.float(), y.float())
     
+    # Validation: Skip batch if loss is non-finite
+    if not torch.isfinite(loss):
+        print("Warning: Non-finite loss, skipping batch")
+        continue
+
     # Backward pass with loss scaling
     scaler.scale(loss).backward()
     scaler.unscale_(optimizer)
@@ -831,23 +851,32 @@ def batch_generator(split, batch_size=32):
 
 ## 8. Evaluation Metrics
 
-### 8.1 Mean Squared Error (MSE)
+#### 6.3.1 Weighted Mean Squared Error (WMSE)
 
-$$MSE = \frac{1}{N} \sum_{i=1}^{N} (y_i - \hat{y}_i)^2$$
+**Purpose**: Precipitation data is highly skewed (mostly zeros). A standard MSE would be dominated by zeros, leading the model to predict "no rain" everywhere.
 
-**Interpretation**: Average squared difference between predictions and ground truth.
+**Solution**: We apply a **weight matrix** to the MSE loss for the precipitation channel.
 
-**Units**: Squared units of the variable (m² for precipitation, K² for temperature).
+**Physically Grounded Thresholding**:
+Instead of arbitrary weights, we use a **physically meaningful threshold** (e.g., 1 mm/hr) to identify "rain events".
 
-### 8.2 Root Mean Squared Error (RMSE)
+1. **Convert 1mm threshold to Z-score**:
+   $$z_{thresh} = \frac{\log(1 + 1.0) - \mu_{precip}}{\sigma_{precip}}$$
+   
+2. **Apply Weight**:
+   $$W_{i,j} = \begin{cases} 
+   3.0 & \text{if } y_{i,j} > z_{thresh} \text{ (Rain Event)} \\
+   1.0 & \text{otherwise} \text{ (No Rain / Light Rain)}
+   \end{cases}$$
 
-$$RMSE = \sqrt{MSE}$$
+**Note**: We use $y_{i,j} > z_{thresh}$ (signed comparison) rather than absolute values, as precipitation is always non-negative.
+
+$$L_{WMSE} = \frac{1}{N} \sum W \odot (Y - \hat{Y})^2$$
 
 **Interpretation**: Same scale as original variable; interpretable as "typical" error magnitude.
 
 **Example**: RMSE of 0.001 m for precipitation means predictions are typically off by ~1 mm.
 
-### 8.3 Why These Metrics?
 
 1. **Directly related to loss function**: Model optimizes MSE, so it's the natural evaluation metric
 2. **Interpretable**: RMSE has same units as data
@@ -870,35 +899,31 @@ $$RMSE = \sqrt{MSE}$$
 
 **Verdict**: ConvLSTM is more suitable for sequence-to-sequence weather prediction.
 
-### 9.2 Decision: 24-Hour Input Window
+### 9.2 Decision: 24-Hour Input Window with Stride 12
 
 | Alternative | Pros | Cons |
 |-------------|------|------|
-| **12 hours** | Less memory, faster | Misses full diurnal cycle |
-| **24 hours** ✓ | Full diurnal cycle, better context | Moderate memory |
-| **48 hours** | More context | High memory, diminishing returns |
-| **72 hours** | Synoptic-scale patterns | Excessive memory, slow training |
+| **Stride 1** | Maximizes data usage | Excessive redundancy (96% overlap), huge training time |
+| **Stride 24** | No redundancy | Too little training data |
+| **Stride 12** ✓ | **Balanced** (50% overlap) | Captures distinct events while keeping dataset size manageable |
 
-**Verdict**: 24 hours is the sweet spot – captures daily patterns without excessive memory.
+**Verdict**: Stride 12 reduces dataset size from ~96k to ~8k batches, speeding up training 10x while maintaining diversity.
 
-### 9.3 Decision: Z-Score Normalization over Min-Max
+### 9.3 Decision: Log-Z-Score Normalization
 
 | Method | Formula | Pros | Cons |
 |--------|---------|------|------|
-| **Z-Score** ✓ | (x-μ)/σ | Handles outliers well, no fixed range | |
-| **Min-Max** | (x-min)/(max-min) | Fixed [0,1] range | Sensitive to outliers, extreme values dominate |
+| **Z-Score** | (x-μ)/σ | Simple | Fails on skewed data (precip has long tail) |
+| **Log-Z-Score** ✓ | (log1p(x)-μ)/σ | **Handles skewness**, makes distribution "Gaussian-like" | Requires inverse transform for interpretation |
 
-**Verdict**: Z-score is more robust for weather data with occasional extreme values.
+**Verdict**: Essential for precipitation. Without log1p, heavy rain events are >20σ outliers, destabilizing gradients.
 
-### 9.4 Decision: MSE Loss over Custom Precipitation Loss
+### 9.4 Decision: Hybrid Loss over MSE
 
 | Loss | Pros | Cons |
 |------|------|------|
-| **MSE** ✓ | Simple, well-understood, stable | May not emphasize rare heavy rain |
-| **Weighted MSE** | Can emphasize heavy rain | Requires careful tuning |
-| **SSIM** | Structural similarity | Designed for images, not time series |
-
-**Verdict**: MSE provides a robust baseline; custom losses can be explored in future work.
+| **MSE** | Stable | Blurry predictions, misses heavy rain |
+| **Hybrid** ✓ | **Sharpness** (SSIM) + **Accuracy** (WeightedMSE) | Harder to tune, can be unstable (fixed with float32) |
 
 ### 9.5 Decision: Temporal Split over Random Split
 

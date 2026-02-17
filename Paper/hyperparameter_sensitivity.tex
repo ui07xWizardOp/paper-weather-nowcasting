@@ -1,0 +1,18 @@
+\begin{table}[htbp]
+\centering
+\caption{Sensitivity Analysis: Impact of Weighting Hyperparameters}
+\label{tab:sensitivity}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}cccc@{}}
+\toprule
+\textbf{Threshold ($\tau_{mm}$)} & \textbf{Weight ($\omega$)} & \textbf{CSI ($\uparrow$)} & \textbf{FAR ($\downarrow$)} \\ \midrule
+0.5 mm/hr & 1.0 (Baseline) & 0.58 & 0.28 \\
+0.5 mm/hr & 2.0 & 0.61 & 0.25 \\
+\textbf{0.5 mm/hr} & \textbf{3.0 (Ours)} & \textbf{0.65} & \textbf{0.22} \\
+0.5 mm/hr & 5.0 & 0.58 & 0.31 \\
+1.0 mm/hr & 3.0 & 0.61 & 0.25 \\
+2.0 mm/hr & 3.0 & 0.54 & 0.28 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

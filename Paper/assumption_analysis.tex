@@ -1,0 +1,15 @@
+\begin{table}[htbp]
+\caption{Assumption Analysis of Nowcasting Paradigms}
+\label{tab:assumptions}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lp{2.4cm}p{2.4cm}p{2.4cm}@{}}
+\toprule
+\textbf{Method} & \textbf{Key Assumption} & \textbf{Failure Condition} & \textbf{Empirical Implication} \\ \midrule
+\textbf{NWP} & Atmosphere follows Euler/Navier-Stokes equations from initial state. & ``Spin-up'' period; unresolved sub-grid physics. & Poor accuracy in first 0--3 hours; high latency. \\
+\textbf{Optical Flow} & Lagrangian persistence (motion field is constant). & Convective initiation (growth) or dissipation (decay). & Rapid performance drop after T+60 mins. \\
+\textbf{Ref-ConvLSTM} & Errors are Gaussian distributed (Minimize MSE). & Multi-modal distributions (rain/no-rain); heavy tails. & ``Blurry'' predictions averaging future possibilities. \\
+\textbf{Ours (WMSE)} & High-intensity events carry more information signal. & False positives if weight $\omega \gg 1$ amplifies noise. & Higher POD/CSI but potentially higher FAR. \\ \bottomrule
+\end{tabular}%
+}
+\end{table}

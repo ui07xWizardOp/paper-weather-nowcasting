@@ -1,0 +1,8 @@
+\section*{Broader Impact}
+\label{sec:impact}
+
+\textbf{Societal Benefit}: Accurate precipitation nowcasting is critical for disaster management in the Indian subcontinent, where flash floods and cloudbursts cause significant loss of life and property. By improving the Critical Success Index (CSI) for moderate rainfall events, our model provides actionable lead time for emergency responders and agriculture planning.
+
+\textbf{Environmental Cost}: Training deep learning models on large spatio-temporal datasets is energy-intensive. Our experiments were conducted on a single NVIDIA T4 GPU, with a total estimated training energy consumption of roughly 15 kWh (approx. 4.3 kg CO2eq). We mitigate this by utilizing mixed-precision training (AMP) and early stopping to prevent redundant computation.
+
+\textbf{Potential Risks}: As with all data-driven models, our system reflects the biases present in the reanalysis data. Users should be cautioned that "reanalysis" is a model-derived product and may not perfectly capture localized micro-physics in data-sparse regions (e.g., Himalayas).

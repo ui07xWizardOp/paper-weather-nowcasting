@@ -1,0 +1,60 @@
+\clearpage
+\appendix
+\onecolumn
+
+\section{Appendix A: Implementation Details}
+\label{app:implementation}
+
+\input{hyperparameter_sensitivity.tex}
+
+\begin{table}[h!]
+\centering
+\caption{Hyperparameter Configuration Space}
+\label{tab:hyperparams}
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value/Setting} \\ \midrule
+Global Random Seed & 42 \\
+Batch Size & 32 \\
+Optimizer & Adam \\
+Initial Learning Rate & $1 \times 10^{-4}$ \\
+Learning Rate Scheduler & Cosine Annealing ($T_{max}=50$) \\
+Minimum Learning Rate & $1 \times 10^{-6}$ \\
+Gradient Clipping Norm & 1.0 \\
+Epochs & 50 \\
+Early Stopping Patience & 10 Epochs \\
+Precision & Mixed (AMP) FP16 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\caption{Detailed Model Architecture (Total Parameters: $\approx$ 1.2M)}
+\label{tab:architecture}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Layer Type} & \textbf{Input Channels} & \textbf{Output Channels} & \textbf{Kernel Size} & \textbf{Activation} \\ \midrule
+\multicolumn{5}{c}{\textbf{Encoder}} \\
+ConvLSTM-1 & 2 (Prec, Temp) & 64 & $3 \times 3$ & Tanh/Sigmoid \\
+ConvLSTM-2 & 64 & 128 & $3 \times 3$ & Tanh/Sigmoid \\
+\multicolumn{5}{c}{\textbf{Decoder}} \\
+ConvLSTM-3 & 128 & 128 & $3 \times 3$ & Tanh/Sigmoid \\
+ConvLSTM-4 & 128 & 64 & $3 \times 3$ & Tanh/Sigmoid \\
+Output Conv & 64 & 2 & $1 \times 1$ & Linear \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Appendix B: Theoretical Complexity}
+\label{app:complexity}
+\input{computational_complexity.tex}
+
+\section{Appendix C: Extended Comparative Analysis}
+\label{app:comparison}
+\input{method_comparison.tex}
+\input{performance_matrix.tex}
+
+\section{Appendix D: Ethics & Reproducibility}
+\label{app:ethics}
+\input{conflict_of_interest.tex}

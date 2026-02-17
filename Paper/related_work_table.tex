@@ -1,0 +1,17 @@
+\begin{table}[htbp]
+\caption{Comparison of Deep Learning Approaches for Precipitation Nowcasting}
+\label{tab:synthesis}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{llllllll}
+\toprule
+\textbf{Paper} & \textbf{Year} & \textbf{Architecture} & \textbf{Loss} & \textbf{Data} & \textbf{Horizon} & \textbf{Prob.} & \textbf{Limitation} \\ \midrule
+Shi et al. \cite{Shi2015} & 2015 & ConvLSTM & MSE & Radar & 0-90m & No & Blurry predictions \\
+Shi et al. \cite{Shi2017} & 2017 & TrajGRU & B-MSE & Radar & 0-120m & No & High compute \\
+Agrawal et al. \cite{Agrawal2019} & 2019 & U-Net & CE & Radar & 0-60m & No & No memory \\
+Sonderby et al. \cite{Sonderby2020} & 2020 & MetNet & CE & Radar+Sat & 0-8h & No & Heavy memory \\
+Ravuri et al. \cite{Ravuri2021} & 2021 & DGMR & GAN & Radar & 0-90m & Yes & Unstable \\
+\textbf{Ours} & 2025 & ConvLSTM & \textbf{WMSE} & \textbf{ERA5-Land} & \textbf{0-6h} & \textbf{No} & Deterministic \\ \bottomrule
+\end{tabular}%
+}
+\end{table}

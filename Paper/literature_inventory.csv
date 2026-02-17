@@ -1,0 +1,13 @@
+id,title,authors,year,venue,url,abstract,methods_tag,dataset,main_metric,code_available,citation_count,visibility_flag,relevance_score
+P001,"Convolutional LSTM Network: A Machine Learning Approach for Precipitation Nowcasting","Shi, X. et al.",2015,NeurIPS,https://arxiv.org/abs/1506.04214,"Introduces ConvLSTM...",RNN,Moving MNIST,MSE,Y,6000,Core,10
+P002,"Deep Learning for Precipitation Nowcasting: A Benchmark and a New Model","Shi, X. et al.",2017,NeurIPS,https://arxiv.org/abs/1706.03458,"Introduces TrajGRU...",RNN,HKO-7,CSI,Y,3000,Core,9
+P003,"The ERA5 global reanalysis","Hersbach, H. et al.",2020,QJRMS,https://rmets.onlinelibrary.wiley.com/doi/10.1002/qj.3803,"Describes ERA5...",Data,Global,N/A,N,10000,Core,10
+P004,"Skilful precipitation nowcasting using deep generative models of radar","Ravuri, S. et al.",2021,Nature,https://www.nature.com/articles/s41586-021-03854-z,"Generative Model...",GAN,Radar,CSI,Y,1500,Relevant,7
+P005,"MetNet: A Neural Weather Model for Precipitation, Wind, and Cloud Cover","Sonderby, C. et al.",2020,arXiv,https://arxiv.org/abs/2003.12140,"MetNet...",CNN,Radar,CSI,N,800,Relevant,6
+P006,"Machine learning for precipitation nowcasting from radar images","Agrawal, S. et al.",2019,arXiv,https://arxiv.org/abs/1912.12132,"U-Net baseline...",CNN,Radar,CSI,N,500,Relevant,6
+P007,"Long short-term memory","Hochreiter, S. et al.",1997,Neural Computation,,,"LSTM...",RNN,N/A,Accuracy,Y,50000,Foundational,8
+P008,"U-net: Convolutional networks for biomedical image segmentation","Ronneberger, O. et al.",2015,MICCAI,,,"U-Net...",CNN,Medical,IOU,Y,40000,Foundational,8
+P009,"Deep residual learning for image recognition","He, K. et al.",2016,CVPR,,,"ResNet...",CNN,ImageNet,Accuracy,Y,100000,Foundational,5
+P010,"Adam: A Method for Stochastic Optimization","Kingma, D. et al.",2014,arXiv,,,"Adam Optimizer...",Opt,N/A,N/A,Y,80000,Foundational,8
+P011,"ERA5-Land: A state-of-the-art global reanalysis dataset for land applications","Muñoz-Sabater, J. et al.",2021,ESSD,,,"ERA5-Land...",Data,Global,N/A,Y,2000,Core,10
+P012,"Image quality assessment: from error visibility to structural similarity","Wang, Z. et al.",2004,IEEE TIP,,,"SSIM...",Metric,N/A,SSIM,Y,60000,Foundational,9

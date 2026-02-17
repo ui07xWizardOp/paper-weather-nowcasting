@@ -155,12 +155,23 @@ def main():
                 print("  Updated output conv to 3x3")
 
     # 0.5 Update Config Cell
+    # 0.5 Update Config Cell
     print("Updating Config Cell...")
     for i, cell in enumerate(nb['cells']):
         src = "".join(cell.get('source', []))
+        new_src = src
+        # Fix Stride
         if "STRIDE = 6" in src:
-             nb['cells'][i]['source'] = [src.replace("STRIDE = 6", "STRIDE = 12")]
+             new_src = new_src.replace("STRIDE = 6", "STRIDE = 12")
              print("  Updated STRIDE to 12 in Config Cell")
+        
+        # Force data path update (Independent of Stride)
+        if "DATA_DIR =" in src:
+             new_src = re.sub(r"DATA_DIR = .*", "DATA_DIR = os.path.join(base_path, 'data', 'batched_v4_linear')", new_src)
+             print("  Updated DATA_DIR to v4_linear in Config Cell")
+             
+        if new_src != src:
+             nb['cells'][i]['source'] = new_src.splitlines(True)
 
     # ... (existing Preprocessing / Data Copy / Auto-Resume logic) ...
 
@@ -180,30 +191,32 @@ def main():
                 cell['source'] = new_src.splitlines(True)
                 print("  Updated create_sequences to use global STRIDE")
 
-    # 1.6 Global Fix: Add log1p transform for precipitation before normalization
-    print("Applying global fix for log1p precipitation transform...")
+    # DATA CLEANUP: Remove log1p if present (Handle contaminated input)
+    print("Ensuring log1p is REMOVED...")
     for cell in nb['cells']:
         if cell['cell_type'] == 'code':
             src = "".join(cell.get('source', []))
-            if "data = np.nan_to_num(data, nan=0.0)" in src and "data = (data - mean) / std" in src:
-                new_src = src.replace(
-                    "data = np.nan_to_num(data, nan=0.0)\n            data = (data - mean) / std",
-                    "data = np.nan_to_num(data, nan=0.0)\n            # Log1p transform precipitation (channel 0) to compress heavy tail\n            data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n            data = (data - mean) / std"
-                )
-                cell['source'] = new_src.splitlines(True)
-                print("  Added log1p transform for precipitation channel")
+            if "np.log1p" in src and "data[..., 0]" in src:
+                # remove log1p lines
+                new_src = src.replace("            # Log1p transform precipitation (channel 0) to compress heavy tail\n", "")
+                new_src = new_src.replace("            data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n", "")
+                # remove stats log1p
+                new_src = new_src.replace("                    # Log1p transform precipitation before computing stats\n", "")
+                new_src = new_src.replace("                    data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n", "")
+                
+                if new_src != src:
+                    cell['source'] = new_src.splitlines(True)
+                    print("  removed log1p traces from cell")
 
-    # 1.6b: Also apply log1p in stats computation pass
+    # GLOBAL FIX: Ensure n_layers=4 (Fixing 3.5M parameter issue)
+    print("Ensuring n_layers=4 everywhere...")
     for cell in nb['cells']:
         if cell['cell_type'] == 'code':
             src = "".join(cell.get('source', []))
-            if "train_values.append(data[::24])" in src and "data = extract_vars(ds)" in src:
-                new_src = src.replace(
-                    "if data is not None:\n                    # Sample every 24th hour to reduce memory\n                    train_values.append(data[::24])",
-                    "if data is not None:\n                    # Log1p transform precipitation before computing stats\n                    data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n                    # Sample every 24th hour to reduce memory\n                    train_values.append(data[::24])"
-                )
+            if "n_layers=2" in src:
+                new_src = src.replace("n_layers=2", "n_layers=4")
                 cell['source'] = new_src.splitlines(True)
-                print("  Added log1p to stats computation pass")
+                print("  Updated n_layers=2 -> 4")
 
     # 1.7 Inject Data Copy Cell (Critical for Speed)
     resume_idx = -1
@@ -218,10 +231,10 @@ def main():
         "import shutil\n",
         "import os\n",
         "\n",
-        "DRIVE_DATA = '/content/drive/MyDrive/WeatherPaper/data/batched'\n",
-        "LOCAL_DATA = '/content/data/batched'\n",
+        "DRIVE_DATA = '/content/drive/MyDrive/WeatherPaper/data/batched_v4_linear'\n",
+        "LOCAL_DATA = '/content/data/batched_v4_linear'\n",
         "# Fallback text path from Cell 1 setup\n",
-        "DEFAULT_DATA = '/content/weather_nowcasting/data/batched'\n",
+        "DEFAULT_DATA = '/content/weather_nowcasting/data/batched_v4_linear'\n",
         "\n",
         "if not os.path.exists(LOCAL_DATA) and os.path.exists(DRIVE_DATA):\n",
         "    print(f'⏳ Copying data from Drive to Local Disk... (This takes ~2-3 mins)')\n",
@@ -316,7 +329,7 @@ def main():
                 "        print(f'\\n\u26a0\ufe0f Checkpoint mismatch (expected due to architecture change): {e}')\n",
                 "        print('\u27f3 Starting fresh training from epoch 0...')\n",
                 "        # Re-init model to be safe\n",
-                "        model = WeatherNowcaster(IN_CHANNELS, HIDDEN_DIM, OUT_CHANNELS, n_layers=2).to(device)\n",
+                "        model = WeatherNowcaster(IN_CHANNELS, HIDDEN_DIM, OUT_CHANNELS, n_layers=4).to(device)\n",
                 "        model.apply(init_weights)  # Re-apply Kaiming init\n",
                 "        start_epoch = 0\n"
             ]
@@ -362,30 +375,9 @@ def main():
             new_lines.append("\n")
             new_lines.append("# SSIMLoss with corrected constants for z-scored data\n")
 
-    # 1.6 Global Fix: Add log1p transform for precipitation before normalization
-    print("Applying global fix for log1p precipitation transform...")
-    for cell in nb['cells']:
-        if cell['cell_type'] == 'code':
-            src = "".join(cell.get('source', []))
-            if "data = np.nan_to_num(data, nan=0.0)" in src and "data = (data - mean) / std" in src:
-                new_src = src.replace(
-                    "data = np.nan_to_num(data, nan=0.0)\n            data = (data - mean) / std",
-                    "data = np.nan_to_num(data, nan=0.0)\n            # Log1p transform precipitation (channel 0) to compress heavy tail\n            data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n            data = (data - mean) / std"
-                )
-                cell['source'] = new_src.splitlines(True)
-                print("  Added log1p transform for precipitation channel")
+    # ROGUE BLOCK DELETED
 
-    # 1.6b: Also apply log1p in stats computation pass so mean/std are computed on log-transformed data
-    for cell in nb['cells']:
-        if cell['cell_type'] == 'code':
-            src = "".join(cell.get('source', []))
-            if "train_values.append(data[::24])" in src and "data = extract_vars(ds)" in src:
-                new_src = src.replace(
-                    "if data is not None:\n                    # Sample every 24th hour to reduce memory\n                    train_values.append(data[::24])",
-                    "if data is not None:\n                    # Log1p transform precipitation before computing stats\n                    data[..., 0] = np.log1p(np.maximum(data[..., 0], 0))\n                    # Sample every 24th hour to reduce memory\n                    train_values.append(data[::24])"
-                )
-                cell['source'] = new_src.splitlines(True)
-                print("  Added log1p to stats computation pass")
+    # ROGUE STATS BLOCK DELETED
 
     # 1.7 Inject Data Copy Cell (Critical for Speed)
     # Find cell with "Auto-Resume Logic" to insert after it
@@ -499,7 +491,7 @@ def main():
                 "        print(f'\\n\u26a0\ufe0f Checkpoint mismatch (expected due to architecture change): {e}')\n",
                 "        print('\u27f3 Starting fresh training from epoch 0...')\n",
                 "        # Re-init model to be safe\n",
-                "        model = WeatherNowcaster(IN_CHANNELS, HIDDEN_DIM, OUT_CHANNELS, n_layers=2).to(device)\n",
+                "        model = WeatherNowcaster(IN_CHANNELS, HIDDEN_DIM, OUT_CHANNELS, n_layers=4).to(device)\n",
                 "        model.apply(init_weights)  # Re-apply Kaiming init\n",
                 "        start_epoch = 0\n"
             ]
@@ -554,15 +546,18 @@ def main():
             new_lines.append("        window = window.unsqueeze(0).unsqueeze(0).expand(C, 1, -1, -1)\n")
             new_lines.append("        pad = self.window_size // 2\n")
             new_lines.append("        mu_p = F.conv2d(pred, window, padding=pad, groups=C)\n")
+            new_lines.append("        # mu_p duplicate removed\n")
             new_lines.append("        mu_t = F.conv2d(target, window, padding=pad, groups=C)\n")
-            new_lines.append("        sigma_p2 = F.conv2d(pred * pred, window, padding=pad, groups=C) - mu_p ** 2\n")
-            new_lines.append("        sigma_t2 = F.conv2d(target * target, window, padding=pad, groups=C) - mu_t ** 2\n")
+            new_lines.append("        # Instability Fix: Clamp variance to be non-negative to avoid NaN/-inf in float16\n")
+            new_lines.append("        sigma_p2 = F.relu(F.conv2d(pred * pred, window, padding=pad, groups=C) - mu_p ** 2)\n")
+            new_lines.append("        sigma_t2 = F.relu(F.conv2d(target * target, window, padding=pad, groups=C) - mu_t ** 2)\n")
             new_lines.append("        sigma_pt = F.conv2d(pred * target, window, padding=pad, groups=C) - mu_p * mu_t\n")
-            new_lines.append("        C1 = (0.01 * self.data_range) ** 2  # Calibrated for z-scored data\n")
+            new_lines.append("        C1 = (0.01 * self.data_range) ** 2\n")
             new_lines.append("        C2 = (0.03 * self.data_range) ** 2\n")
+            new_lines.append("        # Add epsilon to denominator for safety\n")
             new_lines.append("        ssim = ((2 * mu_p * mu_t + C1) * (2 * sigma_pt + C2)) / \\\n")
-            new_lines.append("               ((mu_p ** 2 + mu_t ** 2 + C1) * (sigma_p2 + sigma_t2 + C2))\n")
-            new_lines.append("        return 1 - ssim.mean()\n")
+            new_lines.append("               ((mu_p ** 2 + mu_t ** 2 + C1) * (sigma_p2 + sigma_t2 + C2) + 1e-8)\n")
+            new_lines.append("        return 1 - torch.clamp(ssim, min=-1.0, max=1.0).mean()\n")
             new_lines.append("\n")
             # Combined loss: WeightedMSE + SSIM + MAE
             new_lines.append("wmse_criterion = WeightedMSE(zero_weight=1.0, nonzero_weight=10.0, threshold=0.1)\n")
@@ -571,6 +566,26 @@ def main():
             new_lines.append("def criterion(pred, target):\n")
             new_lines.append("    # Fine-tuning: 0.4 WMSE + 0.3 SSIM + 0.3 MAE\n")
             new_lines.append("    return 0.4 * wmse_criterion(pred, target) + 0.3 * ssim_criterion(pred, target) + 0.3 * mae_criterion(pred, target)\n")
+            new_lines.append("\n")
+            new_lines.append("class NowcastingMetrics:\n")
+            new_lines.append("    @staticmethod\n")
+            new_lines.append("    def critical_success_index(pred, target, threshold=0.5):\n")
+            new_lines.append("        pred_binary = (pred.abs() > threshold).float()\n")
+            new_lines.append("        target_binary = (target.abs() > threshold).float()\n")
+            new_lines.append("        hits = (pred_binary * target_binary).sum()\n")
+            new_lines.append("        misses = ((1 - pred_binary) * target_binary).sum()\n")
+            new_lines.append("        false_alarms = (pred_binary * (1 - target_binary)).sum()\n")
+            new_lines.append("        return (hits / (hits + misses + false_alarms + 1e-8)).item()\n")
+            new_lines.append("\n")
+            new_lines.append("    @staticmethod\n")
+            new_lines.append("    def probability_of_detection(pred, target, threshold=0.5):\n")
+            new_lines.append("        pred_binary = (pred.abs() > threshold).float()\n")
+            new_lines.append("        target_binary = (target.abs() > threshold).float()\n")
+            new_lines.append("        hits = (pred_binary * target_binary).sum()\n")
+            new_lines.append("        misses = ((1 - pred_binary) * target_binary).sum()\n")
+            new_lines.append("        return (hits / (hits + misses + 1e-8)).item()\n")
+            new_lines.append("\n")
+            new_lines.append("metrics = NowcastingMetrics()\n")
             new_lines.append("\n")
             # Proper weight initialization is now in Cell 6
             # new_lines.append("def init_weights(m):\n") ... REMOVED
@@ -615,6 +630,9 @@ def main():
             new_lines.append("    pbar = tqdm(train_loader, \n")
             new_lines.append("                total=n_train_batches, desc=f'Epoch {epoch+1} [Train]', leave=False)\n")
             new_lines.append("    \n")
+            new_lines.append("    # Debug: Check first layer weights to verify updates\n")
+            new_lines.append("    param_before = next(model.parameters()).clone()\n")
+            new_lines.append("    \n")
             new_lines.append("    for x, y in pbar:\n")
             new_lines.append("        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)\n")
             new_lines.append("        optimizer.zero_grad(set_to_none=True)\n")
@@ -625,13 +643,19 @@ def main():
             new_lines.append("        \n")
             new_lines.append("        scaler.scale(loss).backward()\n")
             new_lines.append("        scaler.unscale_(optimizer)\n")
-            new_lines.append("        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)\n")
+            new_lines.append("        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)\n")
             new_lines.append("        scaler.step(optimizer)\n")
             new_lines.append("        scaler.update()\n")
             new_lines.append("        \n")
             new_lines.append("        train_loss += loss.item()\n")
             new_lines.append("        n_batches += 1\n")
-            new_lines.append("        pbar.set_postfix({'loss': f'{loss.item():.4f}'})\n")
+            new_lines.append("        pbar.set_postfix({'loss': f'{loss.item():.4f}', 'scale': f'{scaler.get_scale():.1e}', 'grad': f'{grad_norm:.2f}'})\n")
+            new_lines.append("    \n")
+            new_lines.append("    # Verify weight update\n")
+            new_lines.append("    param_after = next(model.parameters())\n")
+            new_lines.append("    weight_diff = (param_after - param_before).abs().sum().item()\n")
+            new_lines.append("    if weight_diff == 0:\n")
+            new_lines.append("        print(f'⚠️ WARNING: Weights did not update this epoch! (Scaler scale: {scaler.get_scale()}, Grad norm: {grad_norm})_')\n")
             new_lines.append("    \n")
             new_lines.append("    train_loss /= n_batches if n_batches > 0 else 1\n")
             new_lines.append("    train_losses.append(train_loss)\n")
@@ -639,7 +663,7 @@ def main():
             
             # Val
             new_lines.append("    model.eval()\n")
-            new_lines.append("    val_loss, n_val = 0.0, 0\n")
+            new_lines.append("    val_loss, val_csi, val_pod, n_val = 0.0, 0.0, 0.0, 0\n")
             new_lines.append("    with torch.no_grad():\n")
             new_lines.append("        pbar = tqdm(val_loader, \n")
             new_lines.append("                             desc=f'Epoch {epoch+1} [Val]', leave=False)\n")
@@ -647,10 +671,16 @@ def main():
             new_lines.append("        for x, y in pbar:\n")
             new_lines.append("            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)\n")
             new_lines.append("            with torch.amp.autocast('cuda'):\n")
-            new_lines.append("                val_loss += criterion(model(x, T_OUT).float(), y.float()).item()\n")
+            new_lines.append("                pred = model(x, T_OUT)\n")
+            new_lines.append("                val_loss += criterion(pred.float(), y.float()).item()\n")
+            new_lines.append("                # Metrics (Threshold 0.5 ~ significant rain in z-score)\n")
+            new_lines.append("                val_csi += metrics.critical_success_index(pred, y, threshold=0.5)\n")
+            new_lines.append("                val_pod += metrics.probability_of_detection(pred, y, threshold=0.5)\n")
             new_lines.append("            n_val += 1\n")
             new_lines.append("    \n")
             new_lines.append("    val_loss /= n_val if n_val > 0 else 1\n")
+            new_lines.append("    val_csi /= n_val if n_val > 0 else 1\n")
+            new_lines.append("    val_pod /= n_val if n_val > 0 else 1\n")
             new_lines.append("    val_losses.append(val_loss)\n")
             new_lines.append("    scheduler.step()\n")
             new_lines.append("    \n")
@@ -659,7 +689,7 @@ def main():
             new_lines.append("    epoch_time = time.time() - epoch_start\n")
             new_lines.append("    current_lr = optimizer.param_groups[0]['lr']\n")
             new_lines.append("    marker = '\u2605 BEST' if val_loss < best_val_loss else ''\n")
-            new_lines.append("    print(f'Epoch {epoch+1:2d} | Train: {train_loss:.6f} | Val: {val_loss:.6f} | LR: {current_lr:.2e} | Time: {epoch_time:.1f}s {marker}')\n")
+            new_lines.append("    print(f'Epoch {epoch+1:2d} | Train: {train_loss:.6f} | Val: {val_loss:.6f} | CSI: {val_csi:.3f} | POD: {val_pod:.3f} | LR: {current_lr:.2e} | Time: {epoch_time:.1f}s {marker}')\n")
             new_lines.append("    \n")
             # Per-lead-time loss
             new_lines.append("    # Per-lead-time loss breakdown\n")

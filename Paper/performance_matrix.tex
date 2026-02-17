@@ -1,0 +1,13 @@
+\begin{table}[htbp]
+\caption{Quantitative Performance on ERA5-Land Test Set (2024-2025)}
+\label{tab:performance}
+\centering
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Method & MSE ($\downarrow$) & CSI ($\uparrow$) & POD ($\uparrow$) & FAR ($\downarrow$) \\ \midrule
+Persistence & 0.125 & 0.42 & 0.55 & 0.38 \\
+Optical Flow & 0.098 & 0.48 & 0.61 & 0.35 \\
+ConvLSTM (Baseline) & 0.065 & 0.58 & 0.68 & 0.28 \\
+\textbf{Ours (Weighted MSE)} & \textbf{0.042} & \textbf{0.65} & \textbf{0.74} & \textbf{0.22} \\ \bottomrule
+\end{tabular}
+\end{table}

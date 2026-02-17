@@ -1,0 +1,189 @@
+{
+  "project_overview": {
+    "problem_statement": "Short-term weather prediction (0-6 hours) for the Indian subcontinent using deep learning.",
+    "approach": "ConvLSTM Encoder-Decoder architecture trained on ERA5-Land reanalysis data.",
+    "geographic_focus": {
+      "region": "Indian subcontinent",
+      "latitude_range": [
+        5,
+        37
+      ],
+      "longitude_range": [
+        68,
+        98
+      ],
+      "spatial_resolution": "0.1° (~10 km)",
+      "grid_dimensions": [
+        31,
+        41
+      ]
+    }
+  },
+  "dataset": {
+    "source": "ERA5-Land Reanalysis (ECMWF)",
+    "temporal_coverage": "2015-2025 (11 years)",
+    "temporal_resolution": "1 hour",
+    "variables": [
+      {
+        "name": "Total Precipitation (tp)",
+        "unit": "meters (m)",
+        "description": "Accumulated liquid and solid precipitation over one hour"
+      },
+      {
+        "name": "2-meter Temperature (t2m)",
+        "unit": "Kelvin (K)",
+        "description": "Temperature of air at 2 meters above ground"
+      }
+    ],
+    "statistics": {
+      "total_timesteps": "~96,000 hours",
+      "total_data_points": "~244 million"
+    }
+  },
+  "preprocessing": {
+    "pipeline_steps": [
+      "Load & Merge NetCDF files",
+      "Extract Variables (tp, t2m)",
+      "Compute Normalization Statistics (on training set only)",
+      "Normalize Data (Z-score standardization)",
+      "Create Sequences (Sliding Window)",
+      "Split by Year (Temporal Split)",
+      "Save as Batched .npy Files"
+    ],
+    "normalization": {
+      "method": "Z-score standardization",
+      "formula": "(x - mean) / std",
+      "details": "Statistics computed only on training data (2015-2021) to prevent leakage."
+    },
+    "sequence_generation": {
+      "input_length": 24,
+      "output_length": 6,
+      "stride": 12,
+      "justification": "24h input captures diurnal cycles; 12h stride balances data volume."
+    },
+    "data_splitting": {
+      "strategy": "Temporal Split",
+      "train_years": [
+        2015,
+        2021
+      ],
+      "validation_years": [
+        2022,
+        2023
+      ],
+      "test_years": [
+        2024,
+        2025
+      ],
+      "rationale": "Prevents data leakage; 2025 data (partial) used for testing."
+    }
+  },
+  "model_architecture": {
+    "type": "ConvLSTM Encoder-Decoder",
+    "components": {
+      "encoder": "Processes 24h input sequence, produces final hidden state.",
+      "decoder": "Generates 6h output sequence autoregressively from encoder state."
+    },
+    "convlstm_cell": {
+      "innovation": "Uses convolution operations in LSTM gates to preserve spatial structure.",
+      "gates": [
+        "Input",
+        "Forget",
+        "Output",
+        "Candidate Memory"
+      ]
+    },
+    "hyperparameters": {
+      "hidden_dimension": [
+        64,
+        128,
+        128,
+        64
+      ],
+      "layers": 4,
+      "kernel_size": [
+        3,
+        3
+      ],
+      "input_channels": 2,
+      "output_channels": 2,
+      "total_parameters": "~1.2 million"
+    }
+  },
+  "training_methodology": {
+    "loss_function": {
+      "name": "Weighted Mean Squared Error (WMSE) + SSIM",
+      "rationale": "Physically grounded weights (3.0 for rain > 0.5mm/hr) to solve zero-inflation/blurriness."
+    },
+    "optimizer": {
+      "name": "Adam",
+      "learning_rate": 0.001,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "epsilon": 1e-8
+    },
+    "scheduler": {
+      "type": "ReduceLROnPlateau",
+      "patience": 5,
+      "factor": 0.5,
+      "mode": "min"
+    },
+    "regularization": {
+      "gradient_clipping": "max_norm=1.0 (prevents exploding gradients in LSTM)"
+    }
+  },
+  "optimization_techniques": {
+    "mixed_precision": {
+      "enabled": true,
+      "benefits": [
+        "2x memory reduction",
+        "Faster training on Tensor Cores",
+        "Larger batch sizes"
+      ]
+    },
+    "cudnn_benchmark": {
+      "enabled": true,
+      "benefit": "Selects fastest convolution algorithm for fixed input sizes."
+    },
+    "data_loading": {
+      "strategy": "Generator-based loading of pre-batched .npy files to handle RAM constraints."
+    }
+  },
+  "evaluation": {
+    "metrics": [
+      {
+        "name": "CSI (Critical Success Index)",
+        "formula": "TP / (TP + FP + FN)",
+        "interpretation": "Accuracy of rain event prediction"
+      },
+      {
+        "name": "POD (Probability of Detection)",
+        "formula": "TP / (TP + FN)",
+        "interpretation": "Recall for rain events"
+      },
+      {
+        "name": "FAR (False Alarm Ratio)",
+        "formula": "FP / (TP + FP)",
+        "interpretation": "Fraction of false alarms"
+      }
+    ],
+    "baselines": [
+      {
+        "name": "Persistence",
+        "description": "Assumes future weather equals current weather."
+      },
+      {
+        "name": "Optical Flow (Farnebäck)",
+        "description": "Dense optical flow extrapolation."
+      }
+    ]
+  },
+  "key_design_decisions": {
+    "convlstm_vs_3dcnn": "ConvLSTM chosen for explicit temporal memory and flexibility with sequences.",
+    "24h_input_window": "Chosen to capture full diurnal cycle without excessive memory cost.",
+    "zscore_normalization": "Chosen over Min-Max for robustness to outliers.",
+    "mse_loss": "Chosen as a robust baseline over custom losses."
+  }
+}
